@@ -23,3 +23,7 @@ venv/
 instance.lock
 .DS_Store
 .pytest_cache/
+# Windows executable build outputs (release artifacts live in GitHub Actions).
+dist/
+build/
+*.spec
