@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - name: Download verified Windows executable
         uses: actions/download-artifact@v8
         with:
@@ -71,6 +72,9 @@ jobs:
         run: |
           set -euo pipefail
           test -s release/ConnectionPilot.exe
+          test -s assets/connectionpilot.png
+          test -s assets/connectionpilot.ico
+          test -s assets/social-preview.png
           (cd release && sha256sum ConnectionPilot.exe > ConnectionPilot.exe.sha256)
           (cd release && sha256sum --check ConnectionPilot.exe.sha256)
       - name: Publish version v1 release automatically
@@ -90,5 +94,10 @@ jobs:
           gh release create "$TAG" \
             "release/ConnectionPilot.exe#ConnectionPilot v1 for Windows" \
             "release/ConnectionPilot.exe.sha256#SHA-256 checksum" \
+            "assets/connectionpilot.png#Transparent app logo" \
+            "assets/connectionpilot.ico#Windows app icon" \
+            "assets/social-preview.png#GitHub social preview" \
             --target "$GITHUB_SHA" --title "ConnectionPilot v1" --latest \
-            --notes "Windows executable built and verified by GitHub Actions from commit $GITHUB_SHA. The app version remains v1. This executable is unsigned, may trigger SmartScreen, and is not endorsed or approved by LinkedIn."
+            --notes "![ConnectionPilot logo](https://raw.githubusercontent.com/AntnyGamer/ConnectionPilot/$GITHUB_SHA/assets/connectionpilot.png)
+
+            Windows executable built and verified by GitHub Actions from commit $GITHUB_SHA. The app version remains v1. This executable is unsigned, may trigger SmartScreen, and is not endorsed or approved by LinkedIn."

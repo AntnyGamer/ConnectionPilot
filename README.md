@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="112"></p>
+
 # ConnectionPilot v1 — Windows
 
 **Version label: v1.** This label remains v1 for future bug fixes; it is not an incrementing release number. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
@@ -174,3 +176,9 @@ If that browser is absent on the user's machine, the program falls back to
 installed Chrome or Edge and reuses its dedicated sign-in profile. For Google
 sign-in, click the existing sign-in button first and complete authentication
 in the regular browser window. This does not circumvent service restrictions.
+
+## Official logo everywhere
+
+The official ConnectionPilot symbol is the **minimal navy briefcase with a white body and blue arrow** (no initials or LinkedIn trademark). The transparent app PNG (`assets/connectionpilot.png`) is shared by the header and app window. The matching multi-resolution ICO (`assets/connectionpilot.ico`) is used for the title bar, taskbar, and embedded Windows executable icon. Both files are included in every Windows build; the GitHub Release publishes them alongside the executable.
+
+A matching GitHub social-preview graphic is supplied at [`assets/social-preview.png`](assets/social-preview.png). GitHub does not apply this repository-level preview from a commit automatically; to make the preview match, upload that image under **Repository Settings → General → Social preview**. The GitHub owner avatar is unrelated and is not changed.
