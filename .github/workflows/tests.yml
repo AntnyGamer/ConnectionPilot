@@ -4,9 +4,13 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   unit-tests:
     runs-on: windows-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,4 +24,4 @@ jobs:
       - name: Scan repository for accidental private files
         run: python scripts/prepublish_check.py
       - name: Run offline browser and logic simulations
-        run: python -m unittest discover -s tests -v
+        run: python scripts/run_tests.py

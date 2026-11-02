@@ -29,12 +29,18 @@ class BrowserMockTests(unittest.TestCase):
         if shutil.which('chromium'):
             kw['executable_path'] = shutil.which('chromium')
             kw['args'] = ['--no-sandbox']
-        cls.browser = cls.playwright.chromium.launch(**kw)
+        try:
+            cls.browser = cls.playwright.chromium.launch(**kw)
+        except BaseException:
+            cls.playwright.stop()
+            raise
 
     @classmethod
     def tearDownClass(cls):
-        cls.browser.close()
-        cls.playwright.stop()
+        try:
+            cls.browser.close()
+        finally:
+            cls.playwright.stop()
 
     def setUp(self):
         self.temp = TemporaryDirectory()

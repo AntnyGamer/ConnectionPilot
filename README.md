@@ -111,3 +111,15 @@ simulations on each source change; it never signs into LinkedIn.
 When you create a new **private** repository called `ConnectionPilot` on GitHub,
 push this source tree with `git push -u origin main`. Do not reuse an unrelated
 repository, and do not commit the local browser profile or SQLite database.
+
+## CI reliability and GitHub protections
+
+Run `python scripts/run_tests.py` for isolated, timeout-bounded test suites. A
+process that prints `OK` but fails to exit is reported as a failure. GitHub
+Actions runs the same runner with a job timeout. Dependabot and CodeQL
+workflows supply automated dependency and source scanning; GitHub-hosted
+results must be checked before requiring their statuses.
+
+See [GitHub repository protection setup](.github/PROTECTIONS.md) for the
+**manual GitHub Settings** steps needed to actually enforce protection on
+`main`, and enable secret scanning and Dependabot alerts.
