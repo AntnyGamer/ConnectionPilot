@@ -16,6 +16,7 @@ def build():
             "--version-file", str(ROOT / "assets/connectionpilot_version.txt"),
             "--add-data", str(ROOT / "assets/connectionpilot.ico") + ";assets",
             "--add-data", str(ROOT / "assets/connectionpilot.png") + ";assets",
+            "--add-data", str(ROOT / "assets/connectionpilot-header.png") + ";assets",
             "--collect-all", "playwright",
             "--distpath", str(ROOT / "dist"),
             str(ROOT / "main.py")]

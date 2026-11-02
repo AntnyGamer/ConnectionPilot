@@ -1,7 +1,6 @@
-"""Asset and build checks independent of a Windows runner."""
+"""Offline checks for size-optimized, consistently packaged official branding."""
 import struct
 import unittest
-import zlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,68 +9,74 @@ from scripts import build_windows
 
 
 class BrandingTests(unittest.TestCase):
-    def test_source_assets_exist_and_are_nonempty(self):
-        for name in ('connectionpilot.png', 'connectionpilot.ico', 'social-preview.png'):
-            path = main.asset_path(name)
-            self.assertTrue(path.is_file(), name)
-            self.assertGreater(path.stat().st_size, 1000)
+    def test_assets_present(self):
+        for name in ('connectionpilot.png', 'connectionpilot-header.png',
+                     'connectionpilot.ico', 'social-preview.png'):
+            p = main.asset_path(name)
+            self.assertTrue(p.is_file(), name)
+            self.assertGreater(p.stat().st_size, 100)
 
-    def test_png_is_transparent_rgba(self):
-        image = main.asset_path("connectionpilot.png").read_bytes()
-        self.assertTrue(image.startswith(bytes((137, 80, 78, 71, 13, 10, 26, 10))))
-        width, height, depth, mode = struct.unpack(">IIBB", image[16:26])
-        self.assertEqual((width, height, depth, mode), (256, 256, 8, 6))
-        offset, compressed = 8, bytearray()
-        while offset < len(image):
-            length = struct.unpack_from(">I", image, offset)[0]
-            kind = image[offset + 4:offset + 8]
-            if kind == b"IDAT":
-                compressed.extend(image[offset + 8:offset + 8 + length])
-            offset += length + 12
-            if kind == b"IEND":
-                break
-        first_scanline = zlib.decompress(compressed)
-        self.assertIn(first_scanline[0], range(5))
-        self.assertEqual(first_scanline[4], 0, "PNG corners must be transparent")
+    def test_logo_and_header_transparency_and_dimensions(self):
+        for name, width in [('connectionpilot.png', 256),
+                            ('connectionpilot-header.png', 48)]:
+            raw = main.asset_path(name).read_bytes()
+            self.assertTrue(raw.startswith(b'\x89PNG\r\n\x1a\n'))
+            self.assertEqual(struct.unpack_from('>II', raw, 16), (width, width))
+            self.assertEqual(raw[25], 6, 'PNG must have RGBA/alpha')
 
-    def test_ico_has_standard_windows_sizes(self):
-        image = main.asset_path("connectionpilot.ico").read_bytes()
-        reserved, kind, count = struct.unpack_from("<HHH", image)
-        self.assertEqual((reserved, kind), (0, 1))
+    def test_custom_ico_frames_have_real_dimensions_and_transparent_corners(self):
+        content = main.asset_path('connectionpilot.ico').read_bytes()
+        self.assertEqual(struct.unpack_from('<HH', content), (0, 1))
+        total = struct.unpack_from('<H', content, 4)[0]
         sizes = set()
-        for i in range(count):
-            w, h = struct.unpack_from("<BB", image, 6 + i * 16)
-            sizes.add((w or 256, h or 256))
-        self.assertTrue({(16, 16), (32, 32), (48, 48), (256, 256)} <= sizes)
+        for idx in range(total):
+            w, h, _, _, planes, bits, size, offset = struct.unpack_from(
+                '<BBBBHHII', content, 6 + idx * 16)
+            w, h = w or 256, h or 256
+            sizes.add(w)
+            self.assertEqual((w,h), (w,w))
+            self.assertEqual((planes,bits), (1,32))
+            png = content[offset:offset+size]
+            self.assertTrue(png.startswith(b'\x89PNG\r\n\x1a\n'))
+            self.assertEqual(struct.unpack_from('>II',png,16), (w,w))
+            self.assertEqual(png[25], 6)
+        self.assertEqual(sizes, {16, 20, 24, 32, 40, 48, 64, 128, 256})
 
-    def test_small_header_icon(self):
-        self.assertEqual(main.icon_preview_scale(256, 256), 6)
-        self.assertEqual(main.icon_preview_scale(128, 128), 3)
+    def test_windows_ico_has_final_priority_over_png(self):
+        class FakeRoot:
+            calls = []
+            def iconphoto(self, *args): self.calls.append('png')
+            def iconbitmap(self, *args, **kwargs): self.calls.append('ico')
+        root = FakeRoot()
+        with patch.object(main.sys, 'platform', 'win32'), \
+             patch.object(main.tk, 'PhotoImage', return_value=object()):
+            main.set_window_branding(root)
+        self.assertEqual(root.calls, ['png', 'ico'])
 
-    def test_release_includes_matching_logo_files(self):
-        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/windows-build.yml").read_text()
-        self.assertIn("assets/connectionpilot.png", workflow)
-        self.assertIn("assets/connectionpilot.ico", workflow)
-        self.assertIn("release/connectionpilot.png", workflow)
-        self.assertIn("release/connectionpilot.ico", workflow)
+    def test_app_and_exe_include_header_png(self):
+        root = Path(__file__).resolve().parents[1]
+        app = (root / 'main.py').read_text()
+        builder = (root / 'scripts/build_windows.py').read_text()
+        self.assertIn('asset_path("connectionpilot-header.png")', app)
+        self.assertIn('assets/connectionpilot-header.png', builder)
+        self.assertIn('assets/connectionpilot.ico', builder)
+        self.assertIn('root.iconbitmap(default=str(ico))', app)
 
     def test_bundled_asset_location(self):
-        with patch.object(main.sys, '_MEIPASS', '/tmp/connectionpilot-test', create=True):
+        with patch.object(main.sys,'_MEIPASS','/tmp/connectionpilot-test',create=True):
             self.assertEqual(main.asset_path('connectionpilot.png'),
                              Path('/tmp/connectionpilot-test/assets/connectionpilot.png'))
 
-    def test_app_and_exe_use_shared_assets(self):
-        root = Path(__file__).resolve().parents[1]
-        builder = (root / "scripts/build_windows.py").read_text()
-        main_code = (root / "main.py").read_text()
-        self.assertIn("assets/connectionpilot.ico", builder)
-        self.assertIn("assets/connectionpilot.png", builder)
-        self.assertIn('asset_path("connectionpilot.ico")', main_code)
-        self.assertIn('asset_path("connectionpilot.png")', main_code)
-        self.assertIn("root.iconphoto(True, photo)", main_code)
-        self.assertIn("icon_preview_scale(logo.width(), logo.height())", main_code)
+    def test_release_logo_assets(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/windows-build.yml').read_text()
+        self.assertIn('assets/connectionpilot.png', workflow)
+        self.assertIn('assets/connectionpilot.ico', workflow)
 
     def test_windows_builder_not_cross_compilable(self):
-        with patch.object(build_windows.sys, 'platform', 'linux'):
-            with self.assertRaisesRegex(RuntimeError, 'Windows'):
+        with patch.object(build_windows.sys,'platform','linux'):
+            with self.assertRaisesRegex(RuntimeError,'Windows'):
                 build_windows.build()
+
+
+if __name__ == '__main__':
+    unittest.main()

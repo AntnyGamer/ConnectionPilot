@@ -147,7 +147,21 @@ requires separate real-world verification.
 The official **briefcase-and-arrow** logo is shared by the README, the desktop
 header/window, the Windows taskbar, the branded executable, and future releases.
 The transparent 256×256 `assets/connectionpilot.png` is the main icon; the
-multi-resolution `assets/connectionpilot.ico` supplies the Windows icon. The
+multi-resolution `assets/connectionpilot.ico` supplies the Windows icon.
+For small Windows taskbar icons, the ICO contains custom simplified 16, 20,
+24, 32, 40, and 48px frames (plus 64, 128, and 256px frames). The app loads
+`assets/connectionpilot-header.png` at its native 48px size instead of using
+Tkinter's pixel-skipping resize, and applies the Windows ICO after the PNG so
+it cannot be overwritten by a lower-resolution scaled taskbar image.
+
+To regenerate the size-optimized ICO and header PNG from the approved primary
+logo, install Pillow for development only (`python -m pip install Pillow`)
+and run `python scripts/build_icons.py`. Pillow is not required to run the
+application or its normal test suite.
+
+If Windows still shows the previous blurred icon immediately after updating,
+unpin the old shortcut and pin the new `ConnectionPilot.exe`. Windows caches
+icons for existing taskbar pins; an old pin may retain an earlier image. The
 1280×640 `assets/social-preview.png` is the matching repository preview.
 GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
