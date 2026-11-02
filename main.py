@@ -54,6 +54,11 @@ def asset_path(name: str) -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "assets" / name
 
 
+def icon_preview_scale(width, height, target=48):
+    """Keep the header icon small regardless of source PNG dimensions."""
+    return max(1, (max(width, height) + target - 1) // target)
+
+
 def set_window_branding(root):
     """Set a real Windows executable/taskbar icon and a Tk window icon."""
     if sys.platform == "win32":
@@ -128,7 +133,9 @@ class App:
         logo_file = asset_path("connectionpilot.png")
         if logo_file.is_file():
             try:
-                self.header_logo = tk.PhotoImage(master=root, file=str(logo_file)).subsample(3, 3)
+                logo = tk.PhotoImage(master=root, file=str(logo_file))
+                scale = icon_preview_scale(logo.width(), logo.height())
+                self.header_logo = logo.subsample(scale, scale)
                 ttk.Label(header, image=self.header_logo).pack(side="left", padx=(0, 12))
             except tk.TclError:
                 pass

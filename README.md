@@ -1,3 +1,5 @@
+<img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="96" />
+
 # ConnectionPilot v1 — Windows
 
 **Version label: v1.** This label remains v1 for future bug fixes; it is not an incrementing release number. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
@@ -8,13 +10,17 @@ LinkedIn prohibits unauthorized automated invitations, regardless of delay or vo
 
 ## Install on Windows
 
+**Recommended:** Download the latest branded `ConnectionPilot.exe` from [GitHub Releases](https://github.com/AntnyGamer/ConnectionPilot/releases/latest). Python is not required for the standalone EXE. The program is unsigned, and Windows may display a SmartScreen warning.
+
+**Run the source instead:**
+
 1. Install Python 3.11 or newer from https://www.python.org/downloads/windows/ (enable **Add Python to PATH**).
 2. Extract the ZIP. Double-click `Launch_Windows.cmd` to install any missing dependencies and open the app.
 3. If you use Google sign-in: click **Sign in with Google (Chrome / Edge)**, complete LinkedIn's **Continue with Google** in the normal browser window, then close every window of that *dedicated* browser profile before clicking **Start campaign**.
 4. Enter your search phrases, matching terms and optional Advanced filters. Once signed in, one click on **Start campaign** begins the sending workflow; no further connection clicks are requested.
 5. Keep the program and the browser running during sending hours (9 AM–7 PM, New York time).
 
-This ZIP is Python source, not a compiled `.exe`. The first launch requires network access to install dependencies. The Chrome or Edge sign-in profile is kept separate from your regular browser profile.
+The source ZIP is Python source, not a compiled `.exe`. The first source-based launch requires network access to install dependencies. The Chrome or Edge sign-in profile is kept separate from your regular browser profile.
 
 ## Settings
 
@@ -138,9 +144,14 @@ requires separate real-world verification.
 
 ## Branding and Windows executable
 
-ConnectionPilot has an original, non-LinkedIn-branded logo in
-`assets/connectionpilot.png` and `assets/connectionpilot.ico`. The desktop
-window displays the icon, and Windows taskbar/title-bar branding uses the ICO.
+The official **briefcase-and-arrow** logo is shared by the README, the desktop
+header/window, the Windows taskbar, the branded executable, and future releases.
+The transparent 256×256 `assets/connectionpilot.png` is the main icon; the
+multi-resolution `assets/connectionpilot.ico` supplies the Windows icon. The
+1280×640 `assets/social-preview.png` is the matching repository preview.
+GitHub's repository social preview must be uploaded separately in
+**Settings → General → Social preview**; committing the file does not change
+that GitHub setting.
 The stable displayed version remains **v1**.
 
 The repo also contains a **Windows-only** GitHub Actions build at
@@ -160,7 +171,7 @@ confirmed before claiming a tested executable download exists.
 ## Automatic GitHub Releases
 
 After a successful Windows build on a commit merged to `main`, GitHub Actions
-publishes the verified `ConnectionPilot.exe` and its SHA-256 checksum on the
+publishes the verified `ConnectionPilot.exe`, its SHA-256 checksum, and the matching PNG and ICO logo assets on the
 [latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
 Download the EXE from the release page; the desktop version always remains **v1**.
 Each release tag includes a short commit ID (`v1-build-...`) so release assets
