@@ -73,6 +73,12 @@ Tests use simulated LinkedIn pages, not an authenticated LinkedIn account. A pas
 - The dashboard shows total recorded attempts so this conservative goal is understandable.
 - All settings validation uses explicit error handling, even when Python is launched with optimizations enabled.
 
+### Further v1 reliability fixes
+
+- The launcher resolves dependency and program paths from its own folder, even if started from a different working directory.
+- When a candidate appears in more than one search, a stronger match updates the queued candidate's score and summary without changing their name, attempt state, or original discovery time.
+- Pause also stops search-result collection before the next candidate is inspected. If paused partway through a page, that page remains pending; already queued profiles are deduplicated on resume.
+
 These corrections do **not** establish live-site compatibility or create an approved invitation rate.
 
 ## Privacy, security, and GitHub source

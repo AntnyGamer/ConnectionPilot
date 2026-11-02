@@ -68,7 +68,16 @@ class Store:
             cur = db.execute("""INSERT OR IGNORE INTO profiles
                 (url, name, headline, score, discovered_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)""", (url, name[:120], headline[:500], score, now, now))
-            return cur.rowcount > 0
+            if cur.rowcount:
+                return True
+            # The same person may appear in several searches. Keep the best
+            # relevance score for unsent leads without changing their identity,
+            # status, discovery order, or any recorded invitation attempt.
+            db.execute("""UPDATE profiles SET score=?, headline=?
+                WHERE url=? AND status='queued' AND score < ?
+                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
+                       (score, headline[:500], url, score))
+            return False
 
     def has_attempt(self, url):
         with self._conn() as db:

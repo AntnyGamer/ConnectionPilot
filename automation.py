@@ -74,13 +74,15 @@ def wait_or_stop(seconds, stop_event, pause_event, status):
     raise StopRun()
 
 
-def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None):
+def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None, pause_event=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
+        if pause_event is not None and pause_event.is_set():
+            return added
         key = "page:" + search
         page_no = int(store.setting(key, "1"))
         if page_no > 15:
@@ -107,9 +109,13 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         extraction_errors = 0
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
+        paused_during_page = False
         for i in range(anchors.count()):
             if stop_event.is_set():
                 raise StopRun()
+            if pause_event is not None and pause_event.is_set():
+                paused_during_page = True
+                break
             anchor = anchors.nth(i)
             try:
                 if not anchor.is_visible(timeout=1000):
@@ -148,6 +154,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # database error can silently discard people we never examined.
                 extraction_errors += 1
                 continue
+        if paused_during_page:
+            # Keep this page pending: already collected leads are deduplicated
+            # and the rest can be inspected safely after Resume.
+            return added
         if extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
@@ -467,8 +477,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 if not profile:
                     notify("Finding new matching professionals…")
                     before_pages = [store.setting("page:" + term, "1") for term in searches]
-                    new_count = collect_results(page, store, searches, match_terms, stop_event, notify, config["target"], filters)
+                    new_count = collect_results(page, store, searches, match_terms, stop_event, notify,
+                                                config["target"], filters, pause_event)
                     on_update()
+                    if pause_event.is_set():
+                        continue
                     if not new_count:
                         after_pages = [store.setting("page:" + term, "1") for term in searches]
                         if after_pages != before_pages:
