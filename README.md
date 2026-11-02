@@ -1,0 +1,101 @@
+# ConnectionPilot v1 — Windows
+
+**Version label: v1.** This label remains v1 for future bug fixes; it is not an incrementing release number. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
+
+## Important limitations
+
+LinkedIn prohibits unauthorized automated invitations, regardless of delay or volume. Your account can be restricted or suspended. **The 500/day setting is only a local upper bound, not a LinkedIn-approved sending limit.** There is no known universal safe invitation cooldown, and **0.1 seconds does not make automated sending safe**. Actual sending against a live LinkedIn account is not verified and LinkedIn's changing interface may break the automation. Invitations also require recipients to accept; a request is not a confirmed connection.
+
+## Install on Windows
+
+1. Install Python 3.11 or newer from https://www.python.org/downloads/windows/ (enable **Add Python to PATH**).
+2. Extract the ZIP. Double-click `Launch_Windows.cmd` to install any missing dependencies and open the app.
+3. If you use Google sign-in: click **Sign in with Google (Chrome / Edge)**, complete LinkedIn's **Continue with Google** in the normal browser window, then close every window of that *dedicated* browser profile before clicking **Start campaign**.
+4. Enter your search phrases, matching terms and optional Advanced filters. Once signed in, one click on **Start campaign** begins the sending workflow; no further connection clicks are requested.
+5. Keep the program and the browser running during sending hours (9 AM–7 PM, New York time).
+
+This ZIP is Python source, not a compiled `.exe`. The first launch requires network access to install dependencies. The Chrome or Edge sign-in profile is kept separate from your regular browser profile.
+
+## Settings
+
+| Option | Default | Supported range |
+|---|---|---|
+| Campaign goal | 200 | 1–5,000 total confirmed or uncertain attempts |
+| Daily invitation cap | 500 | 1–500 local attempt cap |
+| Cooldown | 90 seconds | 0.1–21,600 seconds, including fractions |
+| Sending window | 9 AM–7 PM Eastern | Fixed |
+| Advanced filters | Minimum relevance score 25 | Location, role, organization, school, sector, exclusions, degree and score |
+
+Keywords separated by commas represent alternatives (OR) within one field; active fields must all match (AND). Matching uses visible profile text, not validated LinkedIn metadata. A search may miss qualified people or include irrelevant ones. LinkedIn's built-in filters may be more accurate. The program will not invent acquaintances or emails to bypass relationship verification.
+
+## Safety and data integrity
+
+- Sign-in happens in a separate local Chrome/Edge profile if you select the Google option. ConnectionPilot never asks for your Google password.
+- It checks that each opened profile URL and visible identity match the discovered candidate before attempting an invitation. Redirects and ambiguous identities are skipped.
+- If a click may have sent an invitation but the site does not confirm, the candidate is marked **Unconfirmed**; it is not retried automatically. Uncertain attempts count toward your goal, daily cap and cooldown.
+- Unconfirmed attempts are automatically set aside and the campaign continues to another person without sending a duplicate. A separate, persistent invitation-attempt record preserves the original attempt time even when a profile's status changes. Existing databases are migrated automatically, using the prior status timestamp as the best available history.
+- The application prevents a second copy from starting against the same data folder, so two sessions cannot select and invite the same candidate simultaneously.
+- Pressing **Pause** before a sending action begins prevents that action. A second pause/stop check prevents the final confirmation click if a dialog is open; the candidate stays under **Unconfirmed**. An action that was already clicked may still finish. Stop/pause does not override LinkedIn's restrictions.
+- It halts on recognized verification, invitation-limit or restriction screens; it does not solve challenges. Normal invitation confirmation modals are handled automatically when their controls are unambiguous; unsupported relationship or email verification is skipped without asking you to click. This does not guarantee unattended operation if LinkedIn logs you out or presents a mandatory challenge.
+- Search-page extraction failures do not cause a partial page to be marked as complete. Empty search pages are retried rather than assumed exhausted; pages with visible but nonmatching candidates advance to the next page.
+- The sending window, daily cap and cooldown are checked again just before the sending action, so slow page loads cannot bypass them.
+- Invitations and local statuses are saved in `%USERPROFILE%\ConnectionPilot\connectionpilot.sqlite3`. Browser session profiles are inside `%USERPROFILE%\ConnectionPilot`. **Do not share the session files**.
+
+**Upgrading an existing installation:** Replace the extracted program code, not the `%USERPROFILE%\ConnectionPilot` data folder. Existing settings, Google login and saved candidate states should persist. Internal migration keys are retained to prevent resetting previous progress, even though the displayed version is always v1.
+
+## Local checks
+
+Run tests with:
+
+```powershell
+py -3 -m unittest discover -s tests -v
+```
+
+Tests use simulated LinkedIn pages, not an authenticated LinkedIn account. A passing local test suite is not proof that current LinkedIn live invitation sending works.
+
+## Unattended invitation handling
+
+- The program handles clearly identified **Send without a note**, **Send invitation**, **Send now**, and contextual **Send** confirmation buttons on its own.
+- If LinkedIn asks for relationship or private-email proof that the program cannot truthfully supply, that candidate is skipped automatically. It never invents relationship details or email addresses.
+- If an invitation might have been initiated but cannot be confirmed, the candidate is marked **Unconfirmed**, never automatically retried, and the campaign continues to another candidate. This is a safety tradeoff; it may mean fewer confirmed invitations than requested.
+- The app stops on sign-in expiration, account limits, security/verification challenges, or explicit Stop. Such service-side requirements cannot be guaranteed away; it is not possible to promise 100% successful unattended invitations.
+
+## Reliability fixes in this v1 build
+- Temporary failures before a Connect click receive at most two additional inspections, spaced 10 seconds apart. The count persists between app restarts; uncertain invitation attempts are never retried automatically.
+- Empty search pages are retried twice with a delay before discovery stops.
+- The last invitation attempt is selected by offset-aware chronological time, so clock fall-back and imported records cannot pick an older invitation.
+- A session that redirects to LinkedIn login/authwall is now recognized as a halt condition rather than continuing through other profiles.
+
+## Additional deep-review reliability corrections
+
+- When search phrases are removed or replaced, the program discards **unattempted queued and filtered** leads from previous searches, then restarts discovery under the new phrases. Reordering searches or adding new searches does not discard existing leads. Recorded invitations, uncertain outcomes and other history remain intact. An old lead can still appear again if it matches the new searches.
+- The campaign goal uses the **total number of recorded Connect attempts**, including attempts later marked skipped because LinkedIn requested verification. They are also counted toward the daily cap and cooldown. This is deliberately conservative: an attempted click is not a confirmed delivery, and a campaign may stop before the requested number of confirmed invitations.
+- The dashboard shows total recorded attempts so this conservative goal is understandable.
+- All settings validation uses explicit error handling, even when Python is launched with optimizations enabled.
+
+These corrections do **not** establish live-site compatibility or create an approved invitation rate.
+
+## Privacy, security, and GitHub source
+
+Read [SECURITY.md](SECURITY.md) before using or publishing the program. The
+program does **not** disguise automation; it is not LinkedIn-approved, and no
+cooldown makes it compliant with LinkedIn's User Agreement. The only dependable
+way to avoid automation-related account restrictions is not to use unauthorized
+automation. Choosing a private GitHub repository helps avoid accidental public
+source publication; it does not reduce LinkedIn's account or legal rules.
+
+The application uses an exact LinkedIn HTTPS-origin check and fails closed if
+a page unexpectedly redirects off-site. Errors saved in local diagnostic logs
+are shortened and redact URLs and obvious credential fields. Dependencies are
+pinned for reproducible installation; update them after security review.
+
+Your login session, cookies and contact history live **outside the source
+folder**, under `%USERPROFILE%\ConnectionPilot`. Never upload or share that
+folder. `.gitignore` and `scripts/prepublish_check.py` provide extra checks
+against accidental publication, but they cannot prevent someone from
+intentionally copying secrets. An automated GitHub workflow runs offline
+simulations on each source change; it never signs into LinkedIn.
+
+When you create a new **private** repository called `ConnectionPilot` on GitHub,
+push this source tree with `git push -u origin main`. Do not reuse an unrelated
+repository, and do not commit the local browser profile or SQLite database.
