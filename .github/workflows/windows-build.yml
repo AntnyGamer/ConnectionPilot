@@ -2,6 +2,8 @@ name: Build branded ConnectionPilot v1 (Windows)
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
