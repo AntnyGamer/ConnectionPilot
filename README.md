@@ -108,9 +108,8 @@ against accidental publication, but they cannot prevent someone from
 intentionally copying secrets. An automated GitHub workflow runs offline
 simulations on each source change; it never signs into LinkedIn.
 
-When you create a new **private** repository called `ConnectionPilot` on GitHub,
-push this source tree with `git push -u origin main`. Do not reuse an unrelated
-repository, and do not commit the local browser profile or SQLite database.
+The source is hosted in the **public** `AntnyGamer/ConnectionPilot` GitHub repository.
+Never commit the local browser profile or SQLite database.
 
 ## CI reliability and GitHub protections
 
@@ -123,3 +122,16 @@ results must be checked before requiring their statuses.
 See [GitHub repository protection setup](.github/PROTECTIONS.md) for the
 **manual GitHub Settings** steps needed to actually enforce protection on
 `main`, and enable secret scanning and Dependabot alerts.
+
+## Dependency versions (verified November 2, 2026)
+
+- `playwright==1.64.1` — latest stable Python Playwright release, published October 22, 2026.
+- `tzdata==2026.6` — latest published Python time zone data, released October 28, 2026.
+- GitHub Actions `actions/checkout@v7` and `actions/setup-python@v7` — current major versions.
+- `github/codeql-action@v4` — latest supported major version.
+
+The Windows launcher reads the pins directly from `requirements.txt` so
+Dependabot updates remain in sync with runtime installation. A Playwright
+upgrade also installs its corresponding Chromium browser if it is missing.
+Release checks are performed with offline tests; signed-in LinkedIn behavior
+requires separate real-world verification.
