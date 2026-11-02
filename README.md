@@ -135,3 +135,24 @@ Dependabot updates remain in sync with runtime installation. A Playwright
 upgrade also installs its corresponding Chromium browser if it is missing.
 Release checks are performed with offline tests; signed-in LinkedIn behavior
 requires separate real-world verification.
+
+## Branding and Windows executable
+
+ConnectionPilot has an original, non-LinkedIn-branded logo in
+`assets/connectionpilot.png` and `assets/connectionpilot.ico`. The desktop
+window displays the icon, and Windows taskbar/title-bar branding uses the ICO.
+The stable displayed version remains **v1**.
+
+The repo also contains a **Windows-only** GitHub Actions build at
+[Actions](https://github.com/AntnyGamer/ConnectionPilot/actions/workflows/windows-build.yml)
+that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
+embeds the icon and version metadata, and verifies the executable. Download
+`ConnectionPilot-v1-Windows-EXE` from the successful workflow's Artifacts.
+This is an unsigned executable and Windows SmartScreen may warn; no code
+signing certificate is bundled. The executable uses Chrome/Edge for Google
+sign-in and needs the relevant browser available on your PC.
+
+The normal ZIP with `Launch_Windows.cmd` is still supported for users
+who prefer running Python source. The `.exe` build is generated on Windows
+CI rather than cross-compiled on Linux; a successful hosted build must be
+confirmed before claiming a tested executable download exists.

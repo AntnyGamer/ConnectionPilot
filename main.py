@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import queue
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -47,6 +48,36 @@ if STORE.setting("ui:cooldown_unit") != "seconds":
 
 APP_VERSION = "v1"  # Stable user-visible label; internal migrations retain their own keys.
 
+
+def asset_path(name: str) -> Path:
+    """Locate packaged branding or source-tree assets without relying on CWD."""
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "assets" / name
+
+
+def set_window_branding(root):
+    """Set a real Windows executable/taskbar icon and a Tk window icon."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ConnectionPilot.App.v1")
+        except (AttributeError, OSError):
+            pass
+        ico = asset_path("connectionpilot.ico")
+        if ico.is_file():
+            try:
+                root.iconbitmap(default=str(ico))
+            except tk.TclError:
+                pass
+    png = asset_path("connectionpilot.png")
+    if png.is_file():
+        try:
+            photo = tk.PhotoImage(master=root, file=str(png))
+            root.iconphoto(True, photo)
+            root._connectionpilot_icon = photo  # Tk needs a persistent reference.
+        except tk.TclError:
+            pass
+
+
 COLORS = {
     "bg": "#f3f6fb", "panel": "#ffffff", "ink": "#15253a", "muted": "#52647b",
     "accent": "#1867bd", "alert": "#9b391b", "line": "#d6e0ec",
@@ -55,6 +86,7 @@ COLORS = {
 class App:
     def __init__(self, root):
         self.root = root
+        set_window_branding(self.root)
         self.root.title(f"ConnectionPilot {APP_VERSION} — LinkedIn Campaign")
         self.root.geometry(f"830x{min(860, max(620, self.root.winfo_screenheight() - 100))}")
         self.root.minsize(760, 620)
@@ -91,7 +123,16 @@ class App:
         outer_window = canvas.create_window((0, 0), window=outer, anchor="nw")
         outer.bind("<Configure>", lambda _: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(outer_window, width=event.width))
-        ttk.Label(outer, text=f"ConnectionPilot {APP_VERSION}", style="Title.TLabel").pack(anchor="w")
+        header = ttk.Frame(outer)
+        header.pack(fill="x")
+        logo_file = asset_path("connectionpilot.png")
+        if logo_file.is_file():
+            try:
+                self.header_logo = tk.PhotoImage(master=root, file=str(logo_file)).subsample(3, 3)
+                ttk.Label(header, image=self.header_logo).pack(side="left", padx=(0, 12))
+            except tk.TclError:
+                pass
+        ttk.Label(header, text=f"ConnectionPilot {APP_VERSION}", style="Title.TLabel").pack(side="left")
         ttk.Label(outer, text="Find relevant professionals and manage a paced invitation campaign.").pack(anchor="w", pady=(2, 10))
 
         warning = tk.Label(outer, text=("IMPORTANT: LinkedIn prohibits unauthorized automated invitations. "
