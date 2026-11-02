@@ -120,7 +120,8 @@ class AppMigrationTests(unittest.TestCase):
             store = Store(root / 'connectionpilot.sqlite3')
             store.set_setting('ui:settings_version', '2')
             store.set_setting('ui:cooldown', '2')
-            env = dict(os.environ, HOME=temp)
+            # pathlib.Path.home() uses USERPROFILE on Windows and HOME on Unix.
+            env = dict(os.environ, HOME=temp, USERPROFILE=temp)
             command = [sys.executable, '-c', "from main import STORE; print(STORE.setting('ui:cooldown'))"]
             first = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], env=env,
                                    text=True, capture_output=True, timeout=10, check=True)
