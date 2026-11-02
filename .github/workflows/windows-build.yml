@@ -61,6 +61,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out the matching logo assets
+        uses: actions/checkout@v7
       - name: Download verified Windows executable
         uses: actions/download-artifact@v8
         with:
@@ -71,6 +73,10 @@ jobs:
         run: |
           set -euo pipefail
           test -s release/ConnectionPilot.exe
+          cp assets/connectionpilot.png release/connectionpilot.png
+          cp assets/connectionpilot.ico release/connectionpilot.ico
+          test -s release/connectionpilot.png
+          test -s release/connectionpilot.ico
           (cd release && sha256sum ConnectionPilot.exe > ConnectionPilot.exe.sha256)
           (cd release && sha256sum --check ConnectionPilot.exe.sha256)
       - name: Publish version v1 release automatically
@@ -90,5 +96,7 @@ jobs:
           gh release create "$TAG" \
             "release/ConnectionPilot.exe#ConnectionPilot v1 for Windows" \
             "release/ConnectionPilot.exe.sha256#SHA-256 checksum" \
+            "release/connectionpilot.png#ConnectionPilot logo" \
+            "release/connectionpilot.ico#Windows application icon" \
             --target "$GITHUB_SHA" --title "ConnectionPilot v1" --latest \
             --notes "Windows executable built and verified by GitHub Actions from commit $GITHUB_SHA. The app version remains v1. This executable is unsigned, may trigger SmartScreen, and is not endorsed or approved by LinkedIn."
