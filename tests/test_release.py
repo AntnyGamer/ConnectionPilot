@@ -15,6 +15,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('needs: build-windows-exe', workflow)
         self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/main'", workflow)
         self.assertIn('contents: write', workflow)
+        self.assertIn('GH_REPO: ${{ github.repository }}', workflow)
         self.assertIn('actions/download-artifact@v8', workflow)
         self.assertIn('sha256sum --check', workflow)
         self.assertIn('gh release create', workflow)
