@@ -54,13 +54,18 @@ def asset_path(name: str) -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "assets" / name
 
 
-def icon_preview_scale(width, height, target=48):
-    """Keep the header icon small regardless of source PNG dimensions."""
-    return max(1, (max(width, height) + target - 1) // target)
-
-
 def set_window_branding(root):
     """Set a real Windows executable/taskbar icon and a Tk window icon."""
+    png = asset_path("connectionpilot.png")
+    if png.is_file():
+        try:
+            photo = tk.PhotoImage(master=root, file=str(png))
+            root.iconphoto(True, photo)
+            root._connectionpilot_icon = photo  # Tk needs a persistent reference.
+        except tk.TclError:
+            pass
+    # Set the multi-resolution .ico LAST on Windows: iconphoto() replaces the
+    # native taskbar/titlebar icon if called after iconbitmap().
     if sys.platform == "win32":
         try:
             import ctypes
@@ -73,14 +78,6 @@ def set_window_branding(root):
                 root.iconbitmap(default=str(ico))
             except tk.TclError:
                 pass
-    png = asset_path("connectionpilot.png")
-    if png.is_file():
-        try:
-            photo = tk.PhotoImage(master=root, file=str(png))
-            root.iconphoto(True, photo)
-            root._connectionpilot_icon = photo  # Tk needs a persistent reference.
-        except tk.TclError:
-            pass
 
 
 COLORS = {
@@ -130,12 +127,12 @@ class App:
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(outer_window, width=event.width))
         header = ttk.Frame(outer)
         header.pack(fill="x")
-        logo_file = asset_path("connectionpilot.png")
+        # This 48px PNG is rendered for its display size, not subsampled
+        # from the full logo (which produced jagged edges and soft details).
+        logo_file = asset_path("connectionpilot-header.png")
         if logo_file.is_file():
             try:
-                logo = tk.PhotoImage(master=root, file=str(logo_file))
-                scale = icon_preview_scale(logo.width(), logo.height())
-                self.header_logo = logo.subsample(scale, scale)
+                self.header_logo = tk.PhotoImage(master=root, file=str(logo_file))
                 ttk.Label(header, image=self.header_logo).pack(side="left", padx=(0, 12))
             except tk.TclError:
                 pass
