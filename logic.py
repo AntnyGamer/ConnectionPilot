@@ -1,0 +1,186 @@
+"""Small, testable matching and scheduling helpers. No LinkedIn session is used here."""
+from __future__ import annotations
+
+import re
+import math
+import unicodedata
+from datetime import datetime, timedelta, time, timezone
+from urllib.parse import urljoin, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("America/New_York")
+
+DEFAULT_SEARCHES = [
+    "political science Rowan University",
+    "government affairs New Jersey",
+    "political campaign staff New Jersey",
+    "public policy New Jersey",
+    "state government New Jersey",
+    "international relations Washington DC",
+    "legislative aide New Jersey",
+    "political science Philadelphia",
+]
+
+# This list is purposefully editable in the app, not claimed to be a guarantee of relevance.
+DEFAULT_MATCH_TERMS = [
+    "politic", "government", "legislativ", "public policy", "public affairs",
+    "diplomac", "international relations", "campaign", "congress", "civic",
+    "rowan", "senat", "assembly", "public service", "council",
+    "state department", "advocacy", "policy analyst", "staffer",
+]
+
+STOP_PHRASES = [
+    "you've reached the invitation limit", "you’ve reached the invitation limit",
+    "you've reached the weekly invitation limit", "you’ve reached the weekly invitation limit",
+    "you're out of invitations", "you’re out of invitations",
+    "invitation limit reached", "temporarily restricted", "your account has been restricted",
+    "account restricted", "unusual activity", "security verification",
+    "verify it's you", "verify it’s you", "captcha", "security challenge",
+    "your account has been temporarily restricted", "too many invitations",
+]
+
+
+def normalize_profile(url: str) -> str | None:
+    """Allow genuine LinkedIn profile paths only (not posts, searches or tracking redirects)."""
+    try:
+        u = urlsplit(urljoin("https://www.linkedin.com", url.strip()))
+        if u.scheme not in ("http", "https") or u.username or u.password or u.port not in (None, 80, 443) or u.hostname not in {"linkedin.com", "www.linkedin.com"}:
+            return None
+        parts = u.path.strip("/").split("/")
+        if len(parts) != 2 or parts[0].lower() != "in":
+            return None
+        slug = parts[1]
+        if not re.fullmatch(r"[A-Za-z0-9_%\-]+", slug) or len(slug) < 2:
+            return None
+        return urlunsplit(("https", "www.linkedin.com", f"/in/{slug}/", "", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def names_match(discovered: str, displayed: str) -> bool:
+    """Require the discovered name to match the actual profile heading before sending."""
+    def normalized(value):
+        value = unicodedata.normalize("NFKD", value or "").casefold()
+        value = "".join(c for c in value if not unicodedata.combining(c))
+        return " ".join(re.findall(r"[a-z0-9]+", value))
+    expected, actual = normalized(discovered), normalized(displayed)
+    if expected == actual:
+        return bool(expected)
+    # LinkedIn's search card can include a professional honorific that the
+    # member's profile omits. Strip only well-known *leading* honorifics.
+    prefixes = {"assemblywoman", "assemblyman", "senator", "representative", "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+    words = expected.split()
+    while words and words[0] in prefixes:
+        words.pop(0)
+    return bool(actual) and len(words) >= 2 and " ".join(words) == actual
+
+
+def match_score(snippet: str, terms: list[str] | None = None) -> int:
+    """Local heuristic, not an AI judgment. Must match at least one interest term."""
+    words = (snippet or "").casefold()
+    hits = sum(1 for term in (terms or DEFAULT_MATCH_TERMS) if term.strip() and term.strip().casefold() in words)
+    return min(100, hits * 25)
+
+
+def has_stop_signal(text: str) -> bool:
+    s = (text or "").casefold()
+    return any(phrase in s for phrase in STOP_PHRASES)
+
+
+def local_now(now: datetime | None = None) -> datetime:
+    return (now or datetime.now(TZ)).astimezone(TZ)
+
+
+def in_work_hours(now: datetime, start: int, end: int) -> bool:
+    d = local_now(now)
+    return start <= d.hour < end
+
+
+def seconds_until_work_hours(now: datetime, start: int, end: int) -> int:
+    d = local_now(now)
+    if in_work_hours(d, start, end):
+        return 0
+    next_day = d.date() if d.hour < start else (d + timedelta(days=1)).date()
+    next_start = datetime.combine(next_day, time(start, 0), TZ)
+    return max(0, math.ceil((next_start.astimezone(timezone.utc) - d.astimezone(timezone.utc)).total_seconds()))
+
+
+def seconds_until_next_send(now: datetime, last_sent_iso: str | None, cooldown_seconds: float) -> float:
+    """Return remaining seconds with sub-second precision."""
+    if not last_sent_iso:
+        return 0
+    last = datetime.fromisoformat(last_sent_iso)
+    if last.tzinfo is None:
+        raise ValueError("Stored timestamps require a timezone")
+    elapsed = (now.astimezone(timezone.utc) - last.astimezone(timezone.utc)).total_seconds()
+    return max(0.0, cooldown_seconds - elapsed)
+
+
+def seconds_until_tomorrow(now: datetime) -> int:
+    d = local_now(now)
+    nxt = datetime.combine((d + timedelta(days=1)).date(), time(0, 0), TZ)
+    return max(0, math.ceil((nxt.astimezone(timezone.utc) - d.astimezone(timezone.utc)).total_seconds()))
+
+
+# Optional strict keyword filters on visible profile text. Each field accepts
+# alternatives (OR); nonempty fields must ALL match (AND). These are not
+# verified LinkedIn metadata fields; missing information is a non-match.
+FILTER_FIELDS = ("locations", "titles", "companies", "schools", "industries")
+
+
+def clean_terms(value) -> list[str]:
+    """Accept a list or comma-separated text. Case-insensitive, no empty filters."""
+    if isinstance(value, str):
+        value = value.split(",")
+    return list(dict.fromkeys(x.strip().casefold() for x in (value or []) if isinstance(x, str) and x.strip()))
+
+
+def passes_profile_filters(profile_text: str, header_text: str, filters: dict | None,
+                           match_terms: list[str] | None = None) -> tuple[bool, str]:
+    """Strictly require visible evidence for every enabled filter group."""
+    f = filters or {}
+    text = " ".join((profile_text or "").casefold().split())
+    if not text:
+        return False, "Profile text unavailable; cannot verify filters."
+    threshold = int(f.get("min_score", 0))
+    if match_score(text, match_terms) < threshold:
+        return False, "Profile below the minimum interest match score."
+    header = " ".join((header_text or "").casefold().split())
+    for field in FILTER_FIELDS:
+        terms = clean_terms(f.get(field))
+        # Check location and role in the person's introduction, not references
+        # to earlier employers, schools, or unrelated people later on the page.
+        source = header if field in ("locations", "titles") else text
+        if terms and not any(term in source for term in terms):
+            return False, f"No visible match for {field} filter."
+    excluded = clean_terms(f.get("exclude"))
+    if any(term in text for term in excluded):
+        return False, "Profile contains an excluded keyword."
+    degree = str(f.get("degree", "Any"))
+    if degree != "Any":
+        # Inspect intro/header only; don't mistake other members in recommendations.
+        allowed = ("2nd",) if degree == "2nd only" else ("2nd", "3rd")
+        if not any(re.search(r"\b" + x + r"\b", header) for x in allowed):
+            return False, "Connection degree not confirmed in profile header."
+    return True, "Visible profile matches enabled filters."
+
+
+MIN_COOLDOWN_SECONDS = 0.1
+MAX_COOLDOWN_SECONDS = 6 * 3600
+
+
+def valid_cooldown_seconds(value) -> bool:
+    """Reject non-finite or out-of-range intervals, including user-entered NaN."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(seconds) and MIN_COOLDOWN_SECONDS <= seconds <= MAX_COOLDOWN_SECONDS
+
+
+def theoretical_daily_capacity(cooldown_seconds: float, start_hour=9, end_hour=19) -> int:
+    """Arithmetic pacing upper bound only; browsing takes additional time."""
+    total_seconds = (end_hour - start_hour) * 3600
+    if total_seconds <= 0 or not valid_cooldown_seconds(cooldown_seconds):
+        return 0
+    return math.ceil(total_seconds / cooldown_seconds)

@@ -1,0 +1,540 @@
+"""Visible browser workflow. Never bypasses challenges or LinkedIn limits."""
+from __future__ import annotations
+
+import re
+import math
+import threading
+import time
+from pathlib import Path
+from urllib.parse import urlencode, urlsplit
+
+from google_login import browser_profile, SUPPORTED
+from security import is_trusted_linkedin_page, safe_diagnostic
+
+from logic import (has_stop_signal, in_work_hours, local_now, match_score,
+                   clean_terms, names_match, normalize_profile, passes_profile_filters, seconds_until_next_send, seconds_until_tomorrow,
+                   seconds_until_work_hours)
+
+class StopRun(Exception):
+    pass
+
+class ProtectionScreen(Exception):
+    pass
+
+
+def browser_launch_settings(data_dir, channel):
+    """Use the same independent browser profile for normal login and later work."""
+    if channel != "chromium" and channel not in SUPPORTED:
+        raise ValueError("Unknown browser channel")
+    profile = (browser_profile(Path(data_dir), channel) if channel in SUPPORTED
+               else Path(data_dir) / "browser-profile")
+    return str(profile), ({"channel": channel} if channel in SUPPORTED else {})
+
+
+def check_protection(page):
+    """Check page and common dialogs, fail closed when any account warning appears."""
+    if not is_trusted_linkedin_page(page.url):
+        raise ProtectionScreen("Browser left the verified LinkedIn HTTPS site; campaign stopped")
+    path = urlsplit(page.url).path.casefold()
+    if any(path == prefix or path.startswith(prefix + "/") for prefix in
+           ("/login", "/authwall", "/checkpoint", "/challenge", "/uas", "/login-submit")):
+        raise ProtectionScreen("LinkedIn displayed a sign-in, checkpoint or verification page")
+    # Visibility-limited text prevents triggering on hidden accessibility instructions.
+    txt = page.locator("body").inner_text(timeout=8000)
+    if has_stop_signal(txt):
+        raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
+
+
+def wait_or_stop(seconds, stop_event, pause_event, status):
+    """Responsive wait that can pause without sending invitations."""
+    until = time.monotonic() + seconds
+    last_bucket = None
+    while not stop_event.is_set():
+        if pause_event.is_set():
+            status("Paused. No requests will be sent.")
+            paused_at = time.monotonic()
+            while pause_event.is_set() and not stop_event.is_set():
+                stop_event.wait(.5)
+            # Pausing does not consume the remaining cooldown.
+            until += time.monotonic() - paused_at
+            continue
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            return
+        if remaining < 1:
+            bucket = ("seconds", "less than 1 second")
+        elif remaining < 60:
+            bucket = ("seconds", f"{math.ceil(remaining)} second(s)")
+        else:
+            bucket = ("minutes", f"{math.ceil(remaining / 60)} minute(s)")
+        if bucket != last_bucket:
+            status(f"Next action in {bucket[1]}. You can pause or stop.")
+            last_bucket = bucket
+        stop_event.wait(min(1, remaining))
+    raise StopRun()
+
+
+def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None):
+    """Collect a small batch from LinkedIn's own People search, using visible cards."""
+    # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
+    added = 0
+    for search in searches:
+        if stop_event.is_set():
+            raise StopRun()
+        key = "page:" + search
+        page_no = int(store.setting(key, "1"))
+        if page_no > 15:
+            continue
+        search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
+            "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
+        notify(f"Looking at page {page_no} for: {search}")
+        page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(1700)
+        check_protection(page)
+        if "/login" in page.url.lower() or "/authwall" in page.url.lower():
+            raise StopRun("LinkedIn has logged you out; sign in and restart.")
+        # Profile links inside visible main-content search results.
+        anchors = page.locator('main a[href*="/in/"]')
+        # A slow-loading result list is not proof that the search is exhausted.
+        if not anchors.count():
+            try:
+                anchors.first.wait_for(state="attached", timeout=6000)
+            except Exception:
+                notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
+                continue
+        seen_this_page = set()
+        valid_profile_links = set()
+        extraction_errors = 0
+        # Scan the *entire* displayed results page rather than silently
+        # discarding links past an arbitrary first-80 cutoff.
+        for i in range(anchors.count()):
+            if stop_event.is_set():
+                raise StopRun()
+            anchor = anchors.nth(i)
+            try:
+                if not anchor.is_visible(timeout=1000):
+                    continue
+                url = normalize_profile(anchor.get_attribute("href") or "")
+                if not url:
+                    continue
+                valid_profile_links.add(url)
+                if url in seen_this_page:
+                    continue
+                # Search UI changes frequently. Use nearest card with enough text.
+                snippet = anchor.evaluate("""el => {
+                  let n=el; for(let j=0;j<6 && n;j++, n=n.parentElement){
+                    const t=(n.innerText||'').trim();
+                    if(t.length>=60 && t.length<1200) return t;
+                  }
+                  return (el.innerText||'').trim();
+                }""") or ""
+                score = match_score(snippet, match_terms)
+                if score < max(0, int((filters or {}).get("min_score", 1))):
+                    continue
+                if any(x in snippet.casefold() for x in clean_terms((filters or {}).get("exclude")) if x):
+                    continue
+                name = (anchor.inner_text(timeout=1200) or "").strip().split("\n")[0].strip()
+                # Non-name action links can point at a real member profile.
+                # Don't queue them as "View profile" or "Connect" candidates.
+                if not name or len(name) > 90 or name.casefold() in {
+                    "view profile", "view full profile", "connect", "follow", "message", "see profile"
+                }:
+                    continue
+                seen_this_page.add(url)
+                if store.add(url, name, snippet, score):
+                    added += 1
+            except Exception:
+                # Retain the current page number: otherwise a temporary DOM or
+                # database error can silently discard people we never examined.
+                extraction_errors += 1
+                continue
+        if extraction_errors:
+            notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
+                   "keeping this page for another attempt.")
+        elif valid_profile_links:
+            # A page with only non-matching candidates must still advance.
+            # Track links independently of candidates that pass the filters.
+            store.set_setting(key, page_no + 1)
+        else:
+            notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
+        notify(f"Queued {added} new matches this pass.")
+        # Stop once we have enough to process for the current day; later passes discover more.
+        if store.counts().get("queued", 0) >= min(30, target):
+            break
+    return added
+
+
+def _profile_intro(page, expected_name):
+    """Resolve the actual profile introduction across legacy and newer LinkedIn layouts.
+
+    Never use an arbitrary sidebar heading or recommendation card as identity.
+    """
+    main = page.locator("main").first
+    if not main.count():
+        return None, "No LinkedIn main profile region found."
+
+    # Modern LinkedIn layouts can render the name as h2 rather than h1;
+    # don't depend on the first <section> in <main>.
+    matching = []
+    for heading in main.locator('h1, h2, [role="heading"]').all()[:50]:
+        if heading.is_visible() and names_match(expected_name, heading.inner_text(timeout=3000).strip()):
+            matching.append(heading)
+    if len(matching) != 1:
+        # Some SDUI variations render the name as a <p>. Only accept this
+        # fallback if the page's own title corroborates the exact full name.
+        title = page.title()
+        title_name = re.split(r"\s*[|–-]\s*LinkedIn\s*$", title, flags=re.I)[0].strip()
+        if not names_match(expected_name, title_name):
+            return None, "Name mismatch: couldn't verify the discovered person against the profile heading or title; nothing clicked."
+        matching = [node for node in main.locator('p').all()[:80]
+                    if node.is_visible() and names_match(expected_name, node.inner_text(timeout=2000).strip())]
+        if len(matching) != 1:
+            return None, "Profile heading unavailable or ambiguous; nothing clicked."
+    name_heading = matching[0]
+
+    # Choose the *smallest* named introduction containing the person's own
+    # action controls. Never search the entire page for Connect buttons.
+    current = name_heading.locator('xpath=..')
+    for _ in range(12):
+        if not current.count():
+            break
+        if current.evaluate('el => el.tagName.toLowerCase() === "main"'):
+            break
+        actions = current.get_by_role("button", name=re.compile(
+            r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I))
+        if actions.count():
+            # A broad layout wrapper may include suggestions for OTHER people.
+            # Do not use its Connect button as the verified person's control.
+            # Failing closed here is safer than inviting the wrong recipient.
+            headings = current.locator('h1, h2, [role="heading"]').all()[:50]
+            if any(h.is_visible() and not names_match(expected_name, h.inner_text(timeout=2000).strip())
+                   for h in headings):
+                return None, "Action panel also contains other headings; nothing clicked."
+            if current.locator("aside").count():
+                return None, "Action panel contains a sidebar; nothing clicked."
+            return current, None
+        current = current.locator('xpath=..')
+    return None, "Verified profile name, but couldn't locate its own action panel. Nothing clicked."
+
+
+def find_first_action(intro, name):
+    """Only accept one explicit action in the verified person's introduction."""
+    pattern = (re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I) if name == "Connect"
+               else re.compile(r"^" + re.escape(name) + (r"(?: actions)?$" if name == "More" else r"$"), re.I))
+    buttons = intro.get_by_role("button", name=pattern)
+    matches = [button for button in buttons.all() if button.is_visible()]
+    return matches[0] if len(matches) == 1 else None
+
+
+def invitation_dialog_action(dialog):
+    """Identify a send control only inside a verified invitation dialog.
+
+    Never click a generic Send control from a chat or message composer.
+    Return (button, reason), with None for unsupported/ambiguous dialogs.
+    """
+    content = dialog.inner_text(timeout=3000)
+    if re.search(r"How do you know|don.t know each other|enter.*email|email address|verify.*relationship", content, re.I):
+        return None, "LinkedIn requires relationship or email confirmation; skipped automatically."
+    patterns = (
+        re.compile(r"^Send without (?:a )?note$", re.I),
+        re.compile(r"^Send invitation$|^Send now$|^Send request$", re.I),
+    )
+    for pattern in patterns:
+        choices = [b for b in dialog.get_by_role("button", name=pattern).all()
+                   if b.is_visible() and b.is_enabled()]
+        if len(choices) == 1:
+            return choices[0], ""
+        if len(choices) > 1:
+            return None, "Multiple invitation send controls; left unconfirmed and continued."
+    # Some invitation modals label the action simply 'Send'. Require clear
+    # invitation context so we never send an unrelated direct message.
+    if re.search(r"\b(invitation|invite|connect)\b", content, re.I) and not re.search(
+        r"\b(message|inmail|chat|compose)\b", content, re.I
+    ):
+        choices = [b for b in dialog.get_by_role("button", name=re.compile(r"^Send$", re.I)).all()
+                   if b.is_visible() and b.is_enabled()]
+        if len(choices) == 1:
+            return choices[0], ""
+    return None, "Unrecognized invitation dialog; set aside automatically without another click."
+
+
+def send_one(page, profile, store, notify, filters=None, match_terms=None,
+             stop_event=None, pause_event=None, pre_click_check=None):
+    """Return sent/skipped/uncertain; never retry a potentially successful invitation."""
+    url = profile["url"]
+    notify("Checking " + profile["name"] + " …")
+    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    page.wait_for_timeout(1250)
+    check_protection(page)
+    if "/login" in page.url.lower() or "/authwall" in page.url.lower():
+        raise StopRun("Please sign in again in the browser before restarting.")
+    # Never click actions on a redirect, even when it leads outside /in/.
+    # A redirect to a feed, a company, or a different member is not the
+    # intended recipient. Compare normalized URLs to tolerate query strings.
+    if normalize_profile(page.url) != url:
+        return "skipped", "Opened URL does not match the discovered profile; nothing clicked."
+    header, error = _profile_intro(page, profile["name"])
+    if header is None:
+        return "skipped", error
+    if filters is not None:
+        try:
+            # Check the selected person's actual visible profile before inviting.
+            # Absence of evidence causes a skip, never a guessed match.
+            visible = page.locator("main").inner_text(timeout=8000)[:12000]
+            intro = header.inner_text(timeout=5000)[:2000]
+            passed, reason = passes_profile_filters(visible, intro, filters, match_terms)
+            if not passed:
+                return "filtered", reason
+        except Exception:
+            return "filtered", "Profile information unavailable; could not verify filters."
+
+    for label in ("Pending", "Remove connection"):
+        if find_first_action(header, label):
+            return "skipped", f"Already connected or invitation pending ({label})."
+
+    # Message may coexist with Connect (e.g. open-profile messaging),
+    # so it isn't proof of an existing first-degree connection.
+    connect = find_first_action(header, "Connect")
+    if not connect:
+        more = find_first_action(header, "More")
+        if more:
+            more.click()
+            page.wait_for_timeout(350)
+            # Only click an explicitly labeled menuitem in the opened menu.
+            candidates = page.get_by_role("menuitem", name=re.compile(r"^(?:Connect|Invite .* to connect)$", re.I))
+            visible = [c for c in candidates.all() if c.is_visible()]
+            if len(visible) == 1:
+                connect = visible[0]
+            else:
+                return "skipped", "No unambiguous Connect menu action."
+        else:
+            return "skipped", "No Connect option in verified profile introduction."
+
+    # A pre-existing notice isn't evidence that *this* invitation was sent.
+    sent_pattern = re.compile(r"Invitation sent|Your invitation has been sent|Invitation pending", re.I)
+    existing_notice = page.get_by_text(sent_pattern)
+    had_notice = any(node.is_visible() for node in existing_notice.all())
+    # A late navigation or cross-site redirect must never initiate an invitation.
+    if not is_trusted_linkedin_page(page.url) or normalize_profile(page.url) != url:
+        return "skipped", "Profile navigated away before the Connect click; nothing clicked."
+    # A Pause or Stop request received during preflight must prevent sending.
+    # Leave the record queued, rather than labeling an unclicked invitation as sent.
+    if stop_event is not None and stop_event.is_set():
+        raise StopRun()
+    if pause_event is not None and pause_event.is_set():
+        return "paused", "Paused before sending; candidate remains queued."
+    # Recheck the sending window, quota and cooldown AFTER page loading.
+    # Loading a slow profile could otherwise allow sending beyond the cap.
+    if pre_click_check is not None and not pre_click_check():
+        return "deferred", "Sending conditions changed during preflight; candidate remains queued."
+    # Persist uncertainty immediately before the first potentially sending click.
+    # A page-load failure before this point leaves the person safely queued.
+    store.mark(url, "uncertain", "Connect action initiated; never retry automatically.")
+    try:
+        connect.click(timeout=7000)
+        page.wait_for_timeout(700)
+        check_protection(page)
+        # Wait briefly for asynchronously rendered confirmation controls. A
+        # direct Connect click can also send immediately without a dialog.
+        visible_dialogs = []
+        for _ in range(5):
+            dialogs = page.get_by_role("dialog")
+            visible_dialogs = [d for d in dialogs.all() if d.is_visible()]
+            if visible_dialogs or find_first_action(header, "Pending"):
+                break
+            page.wait_for_timeout(300)
+        check_protection(page)
+        if len(visible_dialogs) > 1:
+            return "uncertain", "Multiple visible dialogs; set aside automatically without a second click."
+        if visible_dialogs:
+            d = visible_dialogs[0]
+            txt = d.inner_text(timeout=3000)
+            if has_stop_signal(txt):
+                raise ProtectionScreen("LinkedIn displayed an invitation warning")
+            action, reason = invitation_dialog_action(d)
+            if not action:
+                if reason.startswith("LinkedIn requires"):
+                    return "skipped", reason
+                return "uncertain", reason
+            # Honor Pause/Stop before the final action; do not retry an
+            # invitation whose outcome might be uncertain after interruption.
+            if ((stop_event is not None and stop_event.is_set()) or
+                    (pause_event is not None and pause_event.is_set())):
+                return "uncertain", "Confirmation interrupted; set aside automatically to prevent duplicates."
+            # The confirmation must still belong to the original verified profile.
+            if not is_trusted_linkedin_page(page.url) or normalize_profile(page.url) != url:
+                return "uncertain", "Unexpected page navigation before confirmation; no second click."
+            check_protection(page)
+            action.click(timeout=7000)
+        page.wait_for_timeout(900)
+        check_protection(page)
+        # A pending button or confirmation is an indicator; site text changes can prevent verification.
+        pending = find_first_action(header, "Pending")
+        sent_notice = page.get_by_text(sent_pattern)
+        new_notice = not had_notice and any(node.is_visible() for node in sent_notice.all())
+        if pending or new_notice:
+            return "sent", "Invitation confirmed by LinkedIn UI."
+        return "uncertain", "Clicked invitation action but could not verify sending. Set aside automatically; no retry."
+    except ProtectionScreen:
+        raise
+    except Exception as exc:
+        return "uncertain", "UI error after click: " + safe_diagnostic(exc, 180)
+
+
+def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
+    """Run in a background thread. One click launches one visible browser session."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise StopRun("Playwright not installed. Run Launch Windows.cmd to install it.")
+    data_dir = Path(config["data_dir"])
+    data_dir.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as p:
+        channel = config.get("browser_channel", "chromium")
+        try:
+            profile, options = browser_launch_settings(data_dir, channel)
+        except ValueError as exc:
+            raise StopRun("Unknown sign-in browser. Please use the Google sign-in button again.") from exc
+        notify("Opening the saved " + (channel if channel in SUPPORTED else "Chromium") + " browser profile.")
+        try:
+            browser = p.chromium.launch_persistent_context(
+                profile, headless=False, **options,
+                viewport={"width": 1280, "height": 900}, locale="en-US")
+        except Exception as exc:
+            if channel in SUPPORTED:
+                raise StopRun("Could not open the Google sign-in profile. Close the Chrome/Edge "
+                              "window you used to sign in, then try Start again. " + safe_diagnostic(exc, 200)) from exc
+            raise
+        try:
+            page = browser.pages[0] if browser.pages else browser.new_page()
+            page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=45000)
+            if channel in SUPPORTED:
+                # Google sign-in must happen in the NORMAL browser, not the controlled one.
+                # Only the already-established LinkedIn session is reused here.
+                for _ in range(10):
+                    if stop_event.is_set():
+                        raise StopRun()
+                    if "/feed" in page.url and "/login" not in page.url:
+                        break
+                    stop_event.wait(1)
+                else:
+                    raise StopRun("Not signed in. Close this browser, click 'Sign in with Google' "
+                                  "in ConnectionPilot, finish signing in in normal Chrome/Edge, "
+                                  "close that login window, then click Start campaign.")
+            else:
+                notify("If this is your first run, sign in to LinkedIn in the opened browser.")
+                for _ in range(360):
+                    if stop_event.is_set():
+                        raise StopRun()
+                    if "/feed" in page.url and "/login" not in page.url:
+                        break
+                    stop_event.wait(1)
+                else:
+                    raise StopRun("Login not completed. Sign in and click Start again.")
+            check_protection(page)
+            notify("Signed in. Campaign is running.")
+            on_update()
+            searches = [s.strip() for s in config["searches"] if s.strip()]
+            match_terms = [s.strip() for s in config["match_terms"] if s.strip()]
+            filters = config.get("filters", {})
+            discovery_failures = 0
+            while not stop_event.is_set():
+                if pause_event.is_set():
+                    wait_or_stop(2, stop_event, pause_event, notify)
+                    continue
+                counts = store.counts()
+                attempted = store.total_attempts()
+                if attempted >= config["target"]:
+                    notify(f"Goal reached: {attempted} total invitation attempt(s), including "
+                           f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
+                           "unconfirmed. Some clicks may have been rejected by LinkedIn.")
+                    return
+                now = local_now()
+                if not in_work_hours(now, config["start_hour"], config["end_hour"]):
+                    wait_or_stop(seconds_until_work_hours(now, config["start_hour"], config["end_hour"]),
+                                 stop_event, pause_event, notify)
+                    continue
+                today = store.attempts_today()
+                if today >= config["daily_limit"]:
+                    notify(f"Daily cap of {config['daily_limit']} reached. Waiting for tomorrow.")
+                    wait_or_stop(seconds_until_tomorrow(now) + 60, stop_event, pause_event, notify)
+                    continue
+                remaining = seconds_until_next_send(now, store.last_attempt_at(), config["cooldown"])
+                if remaining:
+                    wait_or_stop(remaining, stop_event, pause_event, notify)
+                    continue
+                profile = store.next_profile()
+                if not profile:
+                    notify("Finding new matching professionals…")
+                    before_pages = [store.setting("page:" + term, "1") for term in searches]
+                    new_count = collect_results(page, store, searches, match_terms, stop_event, notify, config["target"], filters)
+                    on_update()
+                    if not new_count:
+                        after_pages = [store.setting("page:" + term, "1") for term in searches]
+                        if after_pages != before_pages:
+                            # Pages with only previously seen or nonmatching profiles
+                            # must not prevent discovery on subsequent result pages.
+                            discovery_failures = 0
+                            notify("No new matches on this page; checking later search pages.")
+                            continue
+                        discovery_failures += 1
+                        if discovery_failures >= 3:
+                            raise StopRun("No matching results after three discovery attempts. "
+                                          "The search layout may have changed or results may be exhausted.")
+                        notify(f"Search temporarily returned no new profiles; retry "
+                               f"{discovery_failures}/2 in 15 seconds.")
+                        wait_or_stop(15, stop_event, pause_event, notify)
+                        continue
+                    discovery_failures = 0
+                    profile = store.next_profile()
+                if not profile:
+                    raise StopRun("Could not select a queued candidate.")
+                if pause_event.is_set():
+                    continue
+                # send_one marks the candidate uncertain immediately before the
+                # first potentially sending click, not during harmless preflight.
+                def can_send_now():
+                    current = local_now()
+                    return (in_work_hours(current, config["start_hour"], config["end_hour"])
+                            and store.attempts_today() < config["daily_limit"]
+                            and seconds_until_next_send(current, store.last_attempt_at(), config["cooldown"]) == 0)
+
+                try:
+                    result, reason = send_one(page, profile, store, notify, filters, match_terms,
+                                              stop_event, pause_event, can_send_now)
+                except (StopRun, ProtectionScreen):
+                    raise
+                except Exception as exc:
+                    # Navigation and DOM failures before the sending click
+                    # should not require manual intervention. Preserve any
+                    # existing uncertain ledger entry if the click began.
+                    if store.has_attempt(profile["url"]):
+                        result = "uncertain"
+                        reason = "Browser error after an attempted click; set aside without retry: " + safe_diagnostic(exc, 150)
+                    else:
+                        retries = store.record_inspection_failure(profile["url"])
+                        if retries < 3:
+                            notify(f"Profile inspection failed before any invitation action "
+                                   f"({retries}/3); retrying in 10 seconds: {safe_diagnostic(exc, 120)}")
+                            wait_or_stop(10, stop_event, pause_event, notify)
+                            continue
+                        result = "skipped"
+                        reason = "Could not inspect profile after three pre-click attempts: " + safe_diagnostic(exc, 150)
+                if result in ("paused", "deferred"):
+                    continue
+                store.mark(profile["url"], result, reason)
+                store.log(result, profile["name"] + " | " + reason)
+                on_update()
+                notify(f"{result.upper()}: {profile['name']}. {reason}")
+                if result == "uncertain":
+                    # Attempt ledger and queue selection make this a permanent
+                    # non-retry. Continue with a different candidate instead
+                    # of stopping for a manual confirmation.
+                    notify("Unconfirmed attempt set aside; continuing automatically with another profile.")
+                if result in ("skipped", "filtered"):
+                    # Throttle skips too, so search/profile navigation isn't rapid-fire.
+                    wait_or_stop(12, stop_event, pause_event, notify)
+                    continue
+            raise StopRun()
+        finally:
+            browser.close()

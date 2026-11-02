@@ -1,0 +1,25 @@
+# No passwords, authentication sessions, browser cookies or local campaign data.
+ConnectionPilot/
+**/google-login-*/
+**/browser-profile/
+**/*cookie*
+**/*session*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.log
+*.pyc
+__pycache__/
+.venv/
+venv/
+.env
+.env.*
+*.pem
+*.p12
+*.key
+*.zip
+*.exe
+instance.lock
+.DS_Store
+.pytest_cache/
