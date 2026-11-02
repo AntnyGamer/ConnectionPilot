@@ -79,6 +79,12 @@ Tests use simulated LinkedIn pages, not an authenticated LinkedIn account. A pas
 - When a candidate appears in more than one search, a stronger match updates the queued candidate's score and summary without changing their name, attempt state, or original discovery time.
 - Pause also stops search-result collection before the next candidate is inspected. If paused partway through a page, that page remains pending; already queued profiles are deduplicated on resume.
 
+Additional checks in this v1 build:
+
+- A delayed invitation-confirmation dialog will not be submitted after the configured sending window closes or the daily attempt cap is exceeded. The earlier Connect action remains in the attempt ledger to avoid duplicate retries.
+- Malformed or out-of-range saved goal/cap values recover to documented defaults on startup, without changing valid saved values.
+- Search results containing only generic action links are not treated as successfully identified people; the page is retained for another inspection rather than silently skipped.
+
 These corrections do **not** establish live-site compatibility or create an approved invitation rate.
 
 ## Privacy, security, and GitHub source

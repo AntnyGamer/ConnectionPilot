@@ -165,6 +165,15 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
     return True, "Visible profile matches enabled filters."
 
 
+def safe_saved_int(value, default: int, minimum: int, maximum: int) -> int:
+    """Recover from malformed or out-of-range saved UI values at startup."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return parsed if minimum <= parsed <= maximum else default
+
+
 MIN_COOLDOWN_SECONDS = 0.1
 MAX_COOLDOWN_SECONDS = 6 * 3600
 

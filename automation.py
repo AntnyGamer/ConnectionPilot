@@ -106,6 +106,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 continue
         seen_this_page = set()
         valid_profile_links = set()
+        named_profile_links = set()
         extraction_errors = 0
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
@@ -134,17 +135,19 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   }
                   return (el.innerText||'').trim();
                 }""") or ""
+                name = (anchor.inner_text(timeout=1200) or "").strip().split("\n")[0].strip()
+                # A valid profile URL is not enough: action links can point to
+                # members without providing a name. Only identified members
+                # establish that this search page was actually inspected.
+                if not name or len(name) > 90 or name.casefold() in {
+                    "view profile", "view full profile", "connect", "follow", "message", "see profile"
+                }:
+                    continue
+                named_profile_links.add(url)
                 score = match_score(snippet, match_terms)
                 if score < max(0, int((filters or {}).get("min_score", 1))):
                     continue
                 if any(x in snippet.casefold() for x in clean_terms((filters or {}).get("exclude")) if x):
-                    continue
-                name = (anchor.inner_text(timeout=1200) or "").strip().split("\n")[0].strip()
-                # Non-name action links can point at a real member profile.
-                # Don't queue them as "View profile" or "Connect" candidates.
-                if not name or len(name) > 90 or name.casefold() in {
-                    "view profile", "view full profile", "connect", "follow", "message", "see profile"
-                }:
                     continue
                 seen_this_page.add(url)
                 if store.add(url, name, snippet, score):
@@ -161,10 +164,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         if extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
-        elif valid_profile_links:
+        elif named_profile_links:
             # A page with only non-matching candidates must still advance.
-            # Track links independently of candidates that pass the filters.
+            # Count member names BEFORE applying filters, so filtered-out
+            # profiles cannot trap discovery on the same search page.
             store.set_setting(key, page_no + 1)
+        elif valid_profile_links:
+            notify(f"Profile URLs appeared for '{search}', but no member names could be read; "
+                   f"retaining page {page_no} rather than silently losing candidates.")
         else:
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
         notify(f"Queued {added} new matches this pass.")
@@ -269,7 +276,8 @@ def invitation_dialog_action(dialog):
 
 
 def send_one(page, profile, store, notify, filters=None, match_terms=None,
-             stop_event=None, pause_event=None, pre_click_check=None):
+             stop_event=None, pause_event=None, pre_click_check=None,
+             pre_confirm_check=None):
     """Return sent/skipped/uncertain; never retry a potentially successful invitation."""
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
@@ -375,6 +383,11 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             if not is_trusted_linkedin_page(page.url) or normalize_profile(page.url) != url:
                 return "uncertain", "Unexpected page navigation before confirmation; no second click."
             check_protection(page)
+            # The dialog may have remained open past the sending window.
+            # The first click is already recorded, so don't apply the
+            # pre-click cooldown check here or try this invitation again.
+            if pre_confirm_check is not None and not pre_confirm_check():
+                return "uncertain", "Sending window or daily cap changed before final confirmation; no second click."
             action.click(timeout=7000)
         page.wait_for_timeout(900)
         check_protection(page)
@@ -512,9 +525,18 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                             and store.attempts_today() < config["daily_limit"]
                             and seconds_until_next_send(current, store.last_attempt_at(), config["cooldown"]) == 0)
 
+                def can_confirm_now():
+                    current = local_now()
+                    # The invitation attempt has already entered the ledger.
+                    # Rechecking the first-click cooldown would always reject
+                    # this same attempt. Don't allow a *second* send after
+                    # crossing the configured time window or daily cap.
+                    return (in_work_hours(current, config["start_hour"], config["end_hour"])
+                            and store.attempts_today() <= config["daily_limit"])
+
                 try:
                     result, reason = send_one(page, profile, store, notify, filters, match_terms,
-                                              stop_event, pause_event, can_send_now)
+                                              stop_event, pause_event, can_send_now, can_confirm_now)
                 except (StopRun, ProtectionScreen):
                     raise
                 except Exception as exc:

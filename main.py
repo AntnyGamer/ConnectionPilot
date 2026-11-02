@@ -16,7 +16,7 @@ from automation import ProtectionScreen, StopRun, run_campaign
 from google_login import open_google_signin
 from logic import (DEFAULT_MATCH_TERMS, DEFAULT_SEARCHES, FILTER_FIELDS,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
-                   valid_cooldown_seconds)
+                   valid_cooldown_seconds, safe_saved_int)
 from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
@@ -106,10 +106,10 @@ class App:
         top = ttk.Frame(panel, style="Card.TFrame")
         top.pack(fill="x")
         ttk.Label(top, text="Invitation goal", style="Card.TLabel").grid(row=0, column=0, sticky="w")
-        self.target = tk.IntVar(value=int(STORE.setting("ui:target", "200")))
+        self.target = tk.IntVar(value=safe_saved_int(STORE.setting("ui:target", "200"), 200, 1, 5000))
         ttk.Spinbox(top, textvariable=self.target, from_=1, to=5000, width=8).grid(row=1, column=0, sticky="w", pady=(3, 10))
         ttk.Label(top, text="Daily invitation cap", style="Card.TLabel").grid(row=0, column=1, sticky="w", padx=(25, 0))
-        self.daily = tk.IntVar(value=int(STORE.setting("ui:daily", "500")))
+        self.daily = tk.IntVar(value=safe_saved_int(STORE.setting("ui:daily", "500"), 500, 1, 500))
         ttk.Spinbox(top, textvariable=self.daily, from_=1, to=500, width=8).grid(row=1, column=1, sticky="w", padx=(25, 0), pady=(3, 10))
         ttk.Label(top, text="Cooldown (seconds)", style="Card.TLabel").grid(row=0, column=2, sticky="w", padx=(25, 0))
         saved_cooldown = STORE.setting("ui:cooldown", "90")

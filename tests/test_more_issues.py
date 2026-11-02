@@ -105,6 +105,35 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.counts().get('queued'), 2)
         self.assertEqual(self.store.setting('page:government'), '2')
 
+    def test_generic_action_links_do_not_discard_unread_people(self):
+        """Valid profile URLs without names must not be treated as inspected leads."""
+        class ActionLink:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, _): return '/in/real-user-123/'
+            def evaluate(self, _): return 'Policy analyst government legislature professional'
+            def inner_text(self, **kwargs): return 'Connect'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, _): return ActionLink()
+
+        class Body:
+            def inner_text(self, **kwargs): return 'People results for government'
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def goto(self, *args, **kwargs): pass
+            def wait_for_timeout(self, *args, **kwargs): pass
+            def locator(self, selector): return Body() if selector == 'body' else Anchors()
+
+        messages = []
+        added = collect_results(Page(), self.store, ['government'], ['policy'],
+                                threading.Event(), messages.append, 20, {'min_score':25})
+        self.assertEqual(added, 0)
+        self.assertEqual(self.store.setting('page:government', '1'), '1')
+        self.assertIn('no member names', ' '.join(messages))
+
+
 
 if __name__ == '__main__':
     unittest.main()

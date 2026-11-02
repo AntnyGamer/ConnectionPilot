@@ -398,6 +398,43 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
         self.assertEqual(self.db.counts().get('uncertain'), 1)
 
+    def test_changed_window_before_final_send_does_not_click(self):
+        # A modal can stay open across the sending-window boundary.
+        # Don't click the final Send once conditions have changed.
+        doc = html("<button id='c' onclick=\"document.getElementById('d').hidden=false\">Connect</button>", """
+            <div role='dialog' id='d' hidden><button id='final'
+            onclick="document.querySelector('#c').textContent='Pending'">Send without a note</button></div>""")
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'politics', 25)
+        checks = []
+        result, reason = send_one(LocalPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
+                                  self.db, lambda _: None, pre_click_check=lambda: True,
+                                  pre_confirm_check=lambda: checks.append(True) or False)
+        self.assertEqual(result, 'uncertain')
+        self.assertEqual(len(checks), 1)
+        self.assertIn('before final confirmation', reason)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
+        self.assertEqual(self.db.total_attempts(), 1)
+
+    def test_valid_window_completes_invitation(self):
+        doc = html("<button id='c' onclick=\"document.getElementById('d').hidden=false\">Connect</button>", """
+            <div role='dialog' id='d' hidden><button id='final'
+            onclick="document.querySelector('#c').textContent='Pending'">Send without a note</button></div>""")
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'politics', 25)
+        result, reason = send_one(LocalPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
+                                  self.db, lambda _: None, pre_click_check=lambda: True,
+                                  pre_confirm_check=lambda: True)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Pending')
+        self.assertEqual(self.db.total_attempts(), 1)
+
     def test_bad_profile_name_link_not_queued(self):
         doc = '<html><body><main><div><a href="/in/legislator/">View profile</a><p>Government policy and public affairs expert.</p></div></main></body></html>'
         class SearchPage:
