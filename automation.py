@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from google_login import browser_profile, SUPPORTED
+from google_login import browser_profile, find_browser, SUPPORTED
 from security import is_trusted_linkedin_page, safe_diagnostic
 
 from logic import (has_stop_signal, in_work_hours, local_now, match_score,
@@ -29,6 +29,21 @@ def browser_launch_settings(data_dir, channel):
     profile = (browser_profile(Path(data_dir), channel) if channel in SUPPORTED
                else Path(data_dir) / "browser-profile")
     return str(profile), ({"channel": channel} if channel in SUPPORTED else {})
+
+
+
+def choose_browser_channel(requested, bundled_chromium):
+    """Use installed Chrome/Edge when standalone builds lack Playwright Chromium."""
+    if requested != "chromium":
+        return requested
+    if Path(bundled_chromium).is_file():
+        return "chromium"
+    try:
+        channel, _ = find_browser()
+        return channel
+    except FileNotFoundError as exc:
+        raise StopRun("No browser is available. Install Chrome or Edge, use Sign in "
+                      "with Google, and then start the campaign again.") from exc
 
 
 def check_protection(page):
@@ -413,7 +428,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     data_dir = Path(config["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
-        channel = config.get("browser_channel", "chromium")
+        requested_channel = config.get("browser_channel", "chromium")
+        channel = choose_browser_channel(requested_channel, p.chromium.executable_path)
+        if channel != requested_channel:
+            notify("Playwright Chromium is not installed. Using installed Chrome/Edge instead; "
+                   "sign in with the Google sign-in button first if this browser profile is new.")
         try:
             profile, options = browser_launch_settings(data_dir, channel)
         except ValueError as exc:

@@ -156,3 +156,21 @@ The normal ZIP with `Launch_Windows.cmd` is still supported for users
 who prefer running Python source. The `.exe` build is generated on Windows
 CI rather than cross-compiled on Linux; a successful hosted build must be
 confirmed before claiming a tested executable download exists.
+
+## Automatic GitHub Releases
+
+After a successful Windows build on a commit merged to `main`, GitHub Actions
+publishes the verified `ConnectionPilot.exe` and its SHA-256 checksum on the
+[latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
+Download the EXE from the release page; the desktop version always remains **v1**.
+Each release tag includes a short commit ID (`v1-build-...`) so release assets
+remain tied to their exact audited source rather than silently overwriting a
+previous release. Pull request builds run checks and produce test artifacts but
+**never** publish a public release. Publishing uses a write-scoped token only
+after a successful Windows test/build job.
+
+A standalone EXE does not contain Playwright's separately distributed Chromium.
+If that browser is absent on the user's machine, the program falls back to
+installed Chrome or Edge and reuses its dedicated sign-in profile. For Google
+sign-in, click the existing sign-in button first and complete authentication
+in the regular browser window. This does not circumvent service restrictions.
