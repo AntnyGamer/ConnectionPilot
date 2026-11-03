@@ -285,6 +285,13 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(self.db.attempts_today(), 1)
             self.assertEqual(self.db.sent_today(), 1)
 
+    def test_last_attempt_uses_chronological_index(self):
+        # Local timestamp text alone is not chronological across UTC offsets.
+        with self.db._conn() as conn:
+            plan = conn.execute("""EXPLAIN QUERY PLAN SELECT initiated_at FROM attempts
+                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchall()
+        self.assertTrue(any('USING INDEX attempts_by_instant' in row[3] for row in plan), plan)
+
     def test_attempt_order_across_dst_fallback(self):
         # Local 01:05 -05:00 occurs *after* local 01:55 -04:00.
         # A text MAX incorrectly picks the first timestamp.
