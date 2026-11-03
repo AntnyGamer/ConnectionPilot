@@ -54,10 +54,25 @@ def check_protection(page):
     if any(path == prefix or path.startswith(prefix + "/") for prefix in
            ("/login", "/authwall", "/checkpoint", "/challenge", "/uas", "/login-submit")):
         raise ProtectionScreen("LinkedIn displayed a sign-in, checkpoint or verification page")
-    # Visibility-limited text prevents triggering on hidden accessibility instructions.
-    txt = page.locator("body").inner_text(timeout=8000)
-    if has_stop_signal(txt):
-        raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
+    # A member's biography, activity, or job history can legitimately mention
+    # "unusual activity", "captcha", or "security verification". Only treat
+    # visible site-warning surfaces as account restrictions, not all page text.
+    warning_surfaces = page.locator(
+        '[role="alert"], [role="alertdialog"], [role="dialog"], '
+        '[aria-live="assertive"], .artdeco-toast-item, .artdeco-inline-feedback, '
+        'body > p, body > h1, body > h2'
+    )
+    for surface in warning_surfaces.all()[:50]:
+        if surface.is_visible() and has_stop_signal(surface.inner_text(timeout=3000)):
+            raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
+    # On non-profile pages, a short, standalone warning may be rendered in
+    # main without an alert role. Never scan a person's full profile for it.
+    if normalize_profile(page.url) is None:
+        main = page.locator("main")
+        if main.count():
+            text = main.first.inner_text(timeout=3000).strip()
+            if len(text) <= 500 and has_stop_signal(text):
+                raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
 
 def wait_or_stop(seconds, stop_event, pause_event, status):
@@ -159,6 +174,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 if not name:
                     continue
                 named_profile_links.add(url)
+                # An explicit first-degree relationship on the result card
+                # means this person is already connected. Avoid opening them.
+                # A plain "1st" in unrelated profile text is not sufficient.
                 # Search UI changes frequently. Use nearest card with enough text.
                 snippet = anchor.evaluate("""el => {
                   let n=el; for(let j=0;j<6 && n;j++, n=n.parentElement){
@@ -167,6 +185,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   }
                   return (el.innerText||'').trim();
                 }""") or ""
+                if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
+                    continue
                 score = match_score(snippet, match_terms)
                 if score < max(0, int(minimum_score)):
                     continue
@@ -352,6 +372,12 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     for label in ("Pending", "Remove connection"):
         if find_first_action(header, label):
             return "skipped", f"Already connected or invitation pending ({label})."
+
+    # Existing first-degree connections can show a Message button and even
+    # a More menu. A verified "1st" badge is positive evidence to skip.
+    intro_text = header.inner_text(timeout=5000)
+    if re.search(r"\b1st(?:[-\s]*degree(?:[-\s]*connection)?)?\b", intro_text, re.I):
+        return "skipped", "Already a first-degree connection; no invitation needed."
 
     # Message may coexist with Connect (e.g. open-profile messaging),
     # so it isn't proof of an existing first-degree connection.
