@@ -130,8 +130,8 @@ class Store:
                     reason LIKE 'Profile name missing from header; nothing clicked.%'
                     OR reason LIKE 'Could not identify LinkedIn profile header; nothing clicked.%'
                     OR reason LIKE 'No Connect option in profile header.%'
-                    OR reason LIKE 'Name mismatch: couldn\'t identify one verified profile heading; nothing clicked.%'
-                    OR reason LIKE 'Verified profile name, but couldn\'t locate its own action panel.%'
+                    OR reason LIKE 'Name mismatch: couldn''t identify one verified profile heading; nothing clicked.%'
+                    OR reason LIKE 'Verified profile name, but couldn''t locate its own action panel.%'
                     OR reason LIKE 'No Connect option in verified profile introduction.%'
                   )""", (self._now(),))
             return cur.rowcount
