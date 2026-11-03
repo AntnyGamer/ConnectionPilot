@@ -57,22 +57,42 @@ def normalize_profile(url: str) -> str | None:
         return None
 
 
+def search_result_name(text: str, label: str = "") -> str | None:
+    """Read a visible member name or an explicit accessible profile-link label."""
+    generic = {"view profile", "view full profile", "connect", "follow",
+               "message", "see profile", "open profile"}
+    name = " ".join((text or "").splitlines()[0].split()) if (text or "").splitlines() else ""
+    if name and len(name) <= 90 and name.casefold() not in generic:
+        return name
+    accessible = " ".join((label or "").split())
+    match = re.fullmatch(
+        r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile",
+        accessible, flags=re.I
+    )
+    if match:
+        name = match.group(1).strip()
+        if name and len(name) <= 90 and name.casefold() not in generic:
+            return name
+    return None
+
+
 def names_match(discovered: str, displayed: str) -> bool:
-    """Require the discovered name to match the actual profile heading before sending."""
+    """Require matching full names, allowing only common display decorations."""
     def normalized(value):
-        value = unicodedata.normalize("NFKD", value or "").casefold()
+        value = re.sub(
+            r"\s*\((?:he|him|she|her|they|them)(?:\s*/\s*(?:he|him|she|her|they|them))+\)\s*$",
+            "", value or "", flags=re.I
+        )
+        value = unicodedata.normalize("NFKD", value).casefold()
         value = "".join(c for c in value if not unicodedata.combining(c))
-        return " ".join(re.findall(r"[a-z0-9]+", value))
+        words = re.findall(r"[a-z0-9]+", value)
+        prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
+                    "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+        while len(words) >= 3 and words[0] in prefixes:
+            words.pop(0)
+        return " ".join(words)
     expected, actual = normalized(discovered), normalized(displayed)
-    if expected == actual:
-        return bool(expected)
-    # LinkedIn's search card can include a professional honorific that the
-    # member's profile omits. Strip only well-known *leading* honorifics.
-    prefixes = {"assemblywoman", "assemblyman", "senator", "representative", "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
-    words = expected.split()
-    while words and words[0] in prefixes:
-        words.pop(0)
-    return bool(actual) and len(words) >= 2 and " ".join(words) == actual
+    return bool(expected) and expected == actual
 
 
 def match_score(snippet: str, terms: list[str] | None = None) -> int:
