@@ -80,6 +80,37 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
         self.assertEqual(self.page.locator('aside button').inner_text(), 'Connect')
 
+    def test_h3_heading_with_named_title_sends_only_target(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div><h3>Test Example</h3>
+          <button id='connect' onclick="this.textContent='Pending'">Connect</button></div>
+          <aside><h3>Another Person</h3><button>Connect</button></aside>
+          </main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+        self.assertEqual(self.page.locator('aside button').inner_text(), 'Connect')
+
+    def test_span_name_requires_corresponding_member_title(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div><span>Test Example</span>
+          <button id='connect' onclick="this.textContent='Pending'">Connect</button></div>
+          </main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
+    def test_matching_recommendation_cannot_override_other_members_title(self):
+        doc = """<html><head><title>Other Person | LinkedIn</title></head><body>
+          <main><div><h2>Other Person</h2><button>Message</button></div>
+          <div><h3>Test Example</h3>
+          <button id='wrong' onclick="this.textContent='Pending'">Connect</button></div>
+          </main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('Name mismatch', reason)
+        self.assertEqual(self.page.locator('#wrong').inner_text(), 'Connect')
+
     def test_sdui_p_name_requires_matching_page_title(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div><div><p>Test Example</p></div>
@@ -133,6 +164,35 @@ class BrowserMockTests(unittest.TestCase):
                                 {'min_score': 25, 'exclude': 'cryptocurrency'})
         self.assertEqual(added, 1)
         self.assertEqual(self.db.next_profile()['url'], 'https://www.linkedin.com/in/legislator-1/')
+
+    def test_accessible_search_link_name_is_discovered(self):
+        doc = """<html><body><main><div>
+          <a href='/in/jane-example/' aria-label="View Jane Example's profile">View profile</a>
+          <p>Government public policy analyst in New Jersey</p>
+          </div></main></body></html>"""
+        class SearchPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
+        added = collect_results(SearchPage(self.page), self.db, ['government'], ['policy'],
+                                threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 1)
+        self.assertEqual(self.db.next_profile()['name'], 'Jane Example')
+
+    def test_generic_accessible_search_link_is_not_a_name(self):
+        doc = """<html><body><main><div>
+          <a href='/in/hidden-name/' aria-label='View profile'>View profile</a>
+          <p>Government public policy analyst in New Jersey</p>
+          </div></main></body></html>"""
+        class SearchPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
+        added = collect_results(SearchPage(self.page), self.db, ['government'], ['policy'],
+                                threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:government', '1'), '1')
 
     def test_profile_filters_before_invitation(self):
         doc = html('''<p>Public Policy Analyst in New Jersey</p>
