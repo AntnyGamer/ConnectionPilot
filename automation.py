@@ -151,6 +151,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 valid_profile_links.add(url)
                 if url in seen_this_page:
                     continue
+                name = search_result_name(anchor.inner_text(timeout=1200) or "")
+                if not name:
+                    name = search_result_name("", anchor.get_attribute("aria-label") or "")
+                # Ignore generic profile actions before reading surrounding
+                # card text. They are not identified people.
+                if not name:
+                    continue
+                named_profile_links.add(url)
                 # Search UI changes frequently. Use nearest card with enough text.
                 snippet = anchor.evaluate("""el => {
                   let n=el; for(let j=0;j<6 && n;j++, n=n.parentElement){
@@ -159,14 +167,6 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   }
                   return (el.innerText||'').trim();
                 }""") or ""
-                name = search_result_name(anchor.inner_text(timeout=1200) or "")
-                if not name:
-                    name = search_result_name("", anchor.get_attribute("aria-label") or "")
-                # Only an identifiable member name establishes that this
-                # search result was inspected, not a generic profile action.
-                if not name:
-                    continue
-                named_profile_links.add(url)
                 score = match_score(snippet, match_terms)
                 if score < max(0, int(minimum_score)):
                     continue
