@@ -88,7 +88,7 @@ class SessionProtectionTests(unittest.TestCase):
     def test_normal_profile_slugs_named_login_or_challenge_not_blocked(self):
         for path in ('/in/login/', '/in/challenge/'):
             page = SimpleNamespace(url='https://www.linkedin.com'+path)
-            page.locator = lambda _: SimpleNamespace(inner_text=lambda **kwargs: 'Test Example')
+            page.locator = lambda _: SimpleNamespace(all=lambda: [])
             check_protection(page)
 
 if __name__ == '__main__':
