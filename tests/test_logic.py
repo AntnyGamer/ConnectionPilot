@@ -55,7 +55,9 @@ class LogicTests(unittest.TestCase):
         self.assertIsNone(search_result_name("View profile", "View profile"))
         self.assertIsNone(search_result_name("Connect", "Send a message"))
         self.assertIsNone(search_result_name("View profile", "Send Jane Example a message"))
-        for generic in ("View full profile", "View public profile", "See full profile", "Open full profile"):
+        for generic in ("View full profile", "View public profile", "See full profile",
+                        "Open full profile", "View member profile", "View their profile",
+                        "See my profile", "Open this profile"):
             with self.subTest(generic=generic):
                 self.assertIsNone(search_result_name(generic))
                 self.assertIsNone(search_result_name("View profile", generic))
