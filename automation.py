@@ -93,7 +93,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
-    minimum_score = max(0, int((filters or {}).get("min_score", 1)))
+    minimum_score = (filters or {}).get("min_score", 1)
     exclusions = clean_terms((filters or {}).get("exclude"))
     for search in searches:
         if stop_event.is_set():
@@ -168,7 +168,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     continue
                 named_profile_links.add(url)
                 score = match_score(snippet, match_terms)
-                if score < minimum_score:
+                if score < max(0, int(minimum_score)):
                     continue
                 if exclusions:
                     folded_snippet = snippet.casefold()
