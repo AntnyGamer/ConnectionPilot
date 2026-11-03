@@ -222,6 +222,29 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.counts().get('sent'), 1)
         self.assertEqual(self.db.requeue_layout_skips(), 0)
 
+    def test_new_layout_skips_requeue_only_without_an_invitation_attempt(self):
+        cases = (
+            ("name-layout", "Name mismatch: couldn't identify one verified profile heading; nothing clicked."),
+            ("action-layout", "Verified profile name, but couldn't locate its own action panel. Nothing clicked."),
+            ("connect-layout", "No Connect option in verified profile introduction."),
+        )
+        for slug, reason in cases:
+            url = 'https://www.linkedin.com/in/' + slug + '/'
+            self.db.add(url, slug, 'government', 25)
+            self.db.mark(url, 'skipped', reason)
+        attempted = 'https://www.linkedin.com/in/layout-after-click/'
+        self.db.add(attempted, 'Attempted Person', 'government', 25)
+        self.db.mark(attempted, 'uncertain', 'Potential click recorded')
+        self.db.mark(attempted, 'skipped', cases[0][1])
+        self.assertEqual(self.db.requeue_layout_skips(), len(cases))
+        self.assertEqual(self.db.requeue_layout_skips(), 0)
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM profiles WHERE url=?", (attempted,)).fetchone()[0],
+                             'skipped')
+            self.assertEqual(conn.execute("SELECT count(*) FROM profiles WHERE status='queued'").fetchone()[0],
+                             len(cases))
+        self.assertTrue(self.db.has_attempt(attempted))
+
     def test_attempt_timestamp_survives_confirmation_and_later_updates(self):
         from datetime import timedelta
         from unittest.mock import patch
