@@ -266,7 +266,7 @@ def _profile_intro(page, expected_name):
             # A broad layout wrapper may include suggestions for OTHER people.
             # Do not use its Connect button as the verified person's control.
             # Failing closed here is safer than inviting the wrong recipient.
-            headings = current.locator('h1, h2, [role="heading"]').all()[:50]
+            headings = current.locator('h1, h2, h3, [role="heading"]').all()[:50]
             if any(h.is_visible() and not names_match(expected_name, h.inner_text(timeout=2000).strip())
                    for h in headings):
                 return None, "Action panel also contains other headings; nothing clicked."
