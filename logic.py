@@ -59,20 +59,24 @@ def normalize_profile(url: str) -> str | None:
 
 def search_result_name(text: str, label: str = "") -> str | None:
     """Read a visible member name or an explicit accessible profile-link label."""
-    generic = {"view profile", "view full profile", "connect", "follow",
-               "message", "see profile", "open profile"}
+    generic = {"view profile", "view full profile", "view public profile",
+               "see profile", "see full profile", "open profile", "open full profile",
+               "connect", "follow", "message"}
     lines = (text or "").splitlines()
     visible = " ".join(lines[0].split()) if lines else ""
     pattern = r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile"
-    match = re.fullmatch(pattern, visible, flags=re.I)
-    name = match.group(1).strip() if match else visible
-    if name and len(name) <= 90 and name.casefold() not in generic:
-        return name
-    accessible = re.fullmatch(pattern, " ".join((label or "").split()), flags=re.I)
-    if accessible:
-        name = accessible.group(1).strip()
+    if visible.casefold() not in generic:
+        match = re.fullmatch(pattern, visible, flags=re.I)
+        name = match.group(1).strip() if match else visible
         if name and len(name) <= 90 and name.casefold() not in generic:
             return name
+    accessible_text = " ".join((label or "").split())
+    if accessible_text.casefold() not in generic:
+        accessible = re.fullmatch(pattern, accessible_text, flags=re.I)
+        if accessible:
+            name = accessible.group(1).strip()
+            if name and len(name) <= 90 and name.casefold() not in generic:
+                return name
     return None
 
 
