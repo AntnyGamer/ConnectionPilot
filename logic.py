@@ -85,7 +85,7 @@ def names_match(discovered: str, displayed: str) -> bool:
         )
         value = unicodedata.normalize("NFKD", value).casefold()
         value = "".join(c for c in value if not unicodedata.combining(c))
-        words = re.findall(r"[a-z0-9]+", value)
+        words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
         prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
                     "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
         while len(words) >= 3 and words[0] in prefixes:
