@@ -263,6 +263,15 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.setting('page:politics', '1'), '1')
         self.assertEqual(self.db.setting('page:government'), '8')
 
+    def test_queued_candidate_selection_uses_priority_index(self):
+        with self.db._conn() as conn:
+            plan = conn.execute("""EXPLAIN QUERY PLAN SELECT * FROM profiles
+                WHERE status='queued' AND NOT EXISTS (
+                    SELECT 1 FROM attempts WHERE attempts.url=profiles.url)
+                ORDER BY score DESC, discovered_at ASC LIMIT 1""").fetchall()
+        self.assertTrue(any('USING INDEX profiles_queue_priority' in row[3]
+                            for row in plan), plan)
+
     def test_local_day_count_includes_both_dst_offsets(self):
         from unittest.mock import patch
         dates = (
