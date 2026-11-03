@@ -27,6 +27,7 @@ class Store:
                     result TEXT NOT NULL, FOREIGN KEY(url) REFERENCES profiles(url)
                 );
                 CREATE INDEX IF NOT EXISTS attempts_by_time ON attempts(initiated_at);
+                CREATE INDEX IF NOT EXISTS attempts_by_instant ON attempts(julianday(initiated_at));
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,
