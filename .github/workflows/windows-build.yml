@@ -23,7 +23,7 @@ jobs:
       - name: Install pinned runtime packages and PyInstaller
         run: |
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller==6.22.3
+          python -m pip install -r requirements-build.txt
       - name: Verify dependencies
         run: |
           python -c "from importlib.metadata import version; from bootstrap import pinned_dependencies; assert all(version(name) == wanted for name, wanted in pinned_dependencies().items()), 'Installed packages do not match requirements.txt'"
