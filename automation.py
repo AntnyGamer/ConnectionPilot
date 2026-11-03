@@ -71,7 +71,8 @@ def check_protection(page):
         main = page.locator("main")
         if main.count():
             text = main.first.inner_text(timeout=3000).strip()
-            if len(text) <= 500 and has_stop_signal(text):
+            first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+            if len(text) <= 500 and has_stop_signal(first_line):
                 raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
 
