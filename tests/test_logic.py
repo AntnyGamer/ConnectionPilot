@@ -263,6 +263,28 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.setting('page:politics', '1'), '1')
         self.assertEqual(self.db.setting('page:government'), '8')
 
+    def test_local_day_count_includes_both_dst_offsets(self):
+        from unittest.mock import patch
+        dates = (
+            ('october', '2026-10-31T23:59:00-04:00', 'sent'),
+            ('first', '2026-11-01T01:55:00-04:00', 'uncertain'),
+            ('second', '2026-11-01T01:05:00-05:00', 'sent'),
+            ('tomorrow', '2026-11-02T00:00:00-05:00', 'sent'),
+        )
+        for label, instant, status in dates:
+            url = 'https://www.linkedin.com/in/' + label + '/'
+            self.db.add(url, label, 'government', 25)
+            with patch.object(self.db, '_now', return_value=instant):
+                self.db.mark(url, status, 'Recorded attempt')
+        with patch.object(self.db, '_today_bounds',
+                          return_value=('2026-11-01T', '2026-11-02T')):
+            self.assertEqual(self.db.attempts_today(), 2)
+            self.assertEqual(self.db.sent_today(), 1)
+        with patch.object(self.db, '_today_bounds',
+                          return_value=('2026-11-02T', '2026-11-03T')):
+            self.assertEqual(self.db.attempts_today(), 1)
+            self.assertEqual(self.db.sent_today(), 1)
+
     def test_attempt_order_across_dst_fallback(self):
         # Local 01:05 -05:00 occurs *after* local 01:55 -04:00.
         # A text MAX incorrectly picks the first timestamp.
