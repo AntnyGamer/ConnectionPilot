@@ -91,6 +91,17 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
         self.assertEqual(self.page.locator('aside button').inner_text(), 'Connect')
 
+    def test_primary_heading_wins_over_matching_recommendation_h3(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div><h2>Test Example</h2>
+          <button id='correct' onclick="this.textContent='Pending'">Connect</button></div>
+          <div><h3>Test Example</h3>
+          <button id='recommendation'>Connect</button></div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#correct').inner_text(), 'Pending')
+        self.assertEqual(self.page.locator('#recommendation').inner_text(), 'Connect')
+
     def test_span_name_requires_corresponding_member_title(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div><span>Test Example</span>
