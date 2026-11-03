@@ -54,6 +54,7 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(search_result_name("Connect", "Open José de la Cruz's profile"), "José de la Cruz")
         self.assertIsNone(search_result_name("View profile", "View profile"))
         self.assertIsNone(search_result_name("Connect", "Send a message"))
+        self.assertIsNone(search_result_name("View profile", "Send Jane Example a message"))
 
     def test_name_decorations_do_not_change_identity(self):
         self.assertTrue(names_match("Senator José de la Cruz (He/Him)", "Jose de la Cruz"))
