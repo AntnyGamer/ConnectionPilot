@@ -22,6 +22,8 @@ class Store:
                     discovered_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     reason TEXT NOT NULL DEFAULT ''
                 );
+                CREATE INDEX IF NOT EXISTS profiles_queue_priority
+                    ON profiles(score DESC, discovered_at ASC) WHERE status='queued';
                 CREATE TABLE IF NOT EXISTS attempts (
                     url TEXT PRIMARY KEY, initiated_at TEXT NOT NULL,
                     result TEXT NOT NULL, FOREIGN KEY(url) REFERENCES profiles(url)
