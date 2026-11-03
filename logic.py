@@ -64,9 +64,13 @@ def search_result_name(text: str, label: str = "") -> str | None:
     lines = (text or "").splitlines()
     visible = " ".join(lines[0].split()) if lines else ""
     pattern = r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile"
-    for candidate in (visible, " ".join((label or "").split())):
-        match = re.fullmatch(pattern, candidate, flags=re.I)
-        name = match.group(1).strip() if match else candidate
+    match = re.fullmatch(pattern, visible, flags=re.I)
+    name = match.group(1).strip() if match else visible
+    if name and len(name) <= 90 and name.casefold() not in generic:
+        return name
+    accessible = re.fullmatch(pattern, " ".join((label or "").split()), flags=re.I)
+    if accessible:
+        name = accessible.group(1).strip()
         if name and len(name) <= 90 and name.casefold() not in generic:
             return name
     return None
