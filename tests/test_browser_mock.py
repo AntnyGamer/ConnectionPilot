@@ -179,7 +179,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_accessible_search_link_name_is_discovered(self):
         doc = """<html><body><main><div>
           <a href='/in/jane-example/' aria-label="View Jane Example's profile">View profile</a>
-          <p>Government public policy analyst in New Jersey</p>
+          <p>Government public policy analyst working in New Jersey state government</p>
           </div></main></body></html>"""
         class SearchPage:
             def __init__(self, page): self.page = page
@@ -193,7 +193,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_generic_accessible_search_link_is_not_a_name(self):
         doc = """<html><body><main><div>
           <a href='/in/hidden-name/' aria-label='View profile'>View profile</a>
-          <p>Government public policy analyst in New Jersey</p>
+          <p>Government public policy analyst working in New Jersey state government</p>
           </div></main></body></html>"""
         class SearchPage:
             def __init__(self, page): self.page = page
