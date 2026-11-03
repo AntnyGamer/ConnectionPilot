@@ -94,7 +94,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
     minimum_score = (filters or {}).get("min_score", 1)
-    exclusions = clean_terms((filters or {}).get("exclude"))
+    exclusions = None
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
@@ -170,6 +170,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 score = match_score(snippet, match_terms)
                 if score < max(0, int(minimum_score)):
                     continue
+                if exclusions is None:
+                    exclusions = clean_terms((filters or {}).get("exclude"))
                 if exclusions:
                     folded_snippet = snippet.casefold()
                     if any(term in folded_snippet for term in exclusions):
