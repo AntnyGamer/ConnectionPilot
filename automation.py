@@ -170,8 +170,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 score = match_score(snippet, match_terms)
                 if score < minimum_score:
                     continue
-                if exclusions and any(x in snippet.casefold() for x in exclusions):
-                    continue
+                if exclusions:
+                    folded_snippet = snippet.casefold()
+                    if any(term in folded_snippet for term in exclusions):
+                        continue
                 seen_this_page.add(url)
                 if store.add(url, name, snippet, score):
                     added += 1
