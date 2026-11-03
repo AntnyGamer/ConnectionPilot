@@ -61,16 +61,12 @@ def search_result_name(text: str, label: str = "") -> str | None:
     """Read a visible member name or an explicit accessible profile-link label."""
     generic = {"view profile", "view full profile", "connect", "follow",
                "message", "see profile", "open profile"}
-    name = " ".join((text or "").splitlines()[0].split()) if (text or "").splitlines() else ""
-    if name and len(name) <= 90 and name.casefold() not in generic:
-        return name
-    accessible = " ".join((label or "").split())
-    match = re.fullmatch(
-        r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile",
-        accessible, flags=re.I
-    )
-    if match:
-        name = match.group(1).strip()
+    lines = (text or "").splitlines()
+    visible = " ".join(lines[0].split()) if lines else ""
+    pattern = r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile"
+    for candidate in (visible, " ".join((label or "").split())):
+        match = re.fullmatch(pattern, candidate, flags=re.I)
+        name = match.group(1).strip() if match else candidate
         if name and len(name) <= 90 and name.casefold() not in generic:
             return name
     return None
