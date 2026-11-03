@@ -223,11 +223,13 @@ def _profile_intro(page, expected_name):
             return None, "Name mismatch: page title identifies another member; nothing clicked."
 
     matching = []
-    for heading in main.locator('h1, h2, h3, [role="heading"]').all()[:60]:
-        if (not heading.locator("xpath=ancestor::aside").count()
-                and heading.is_visible()
-                and names_match(expected_name, heading.inner_text(timeout=3000).strip())):
-            matching.append(heading)
+    for selector in ('h1, h2, [role="heading"]', 'h3'):
+        matching = [heading for heading in main.locator(selector).all()[:60]
+                    if not heading.locator("xpath=ancestor::aside").count()
+                    and heading.is_visible()
+                    and names_match(expected_name, heading.inner_text(timeout=3000).strip())]
+        if matching:
+            break
     if not matching and title_name:
         # Newer layouts sometimes place the name in plain text rather
         # than a heading. Require title corroboration and one candidate.
