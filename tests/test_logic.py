@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from logic import (has_stop_signal, names_match, in_work_hours, local_now, match_score, normalize_profile,
+from logic import (has_stop_signal, names_match, search_result_name, in_work_hours, local_now, match_score, normalize_profile,
                    passes_profile_filters, theoretical_daily_capacity, valid_cooldown_seconds,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int)
 from storage import Store
@@ -47,6 +47,20 @@ class LogicTests(unittest.TestCase):
         sample = 'Analyst working in politics'
         self.assertFalse(passes_profile_filters(sample, 'Analyst', {'locations':'New Jersey'}, ['politic'])[0])
         self.assertTrue(passes_profile_filters(sample, 'Analyst', {'min_score':0}, ['legislative'])[0])
+    def test_search_names_from_visible_and_accessible_labels(self):
+        self.assertEqual(search_result_name("Jane Example"), "Jane Example")
+        self.assertEqual(search_result_name("View profile", "View Jane Example's profile"), "Jane Example")
+        self.assertEqual(search_result_name("View Jane Example’s profile"), "Jane Example")
+        self.assertEqual(search_result_name("Connect", "Open José de la Cruz's profile"), "José de la Cruz")
+        self.assertIsNone(search_result_name("View profile", "View profile"))
+        self.assertIsNone(search_result_name("Connect", "Send a message"))
+
+    def test_name_decorations_do_not_change_identity(self):
+        self.assertTrue(names_match("Senator José de la Cruz (He/Him)", "Jose de la Cruz"))
+        self.assertTrue(names_match("Jane Example", "Dr. Jane Example (She/Her)"))
+        self.assertFalse(names_match("Jane Example", "Jane Different (She/Her)"))
+        self.assertFalse(names_match("Jane Example (Former)", "Jane Example"))
+
     def test_name_validation(self):
         self.assertTrue(names_match('José de la Cruz', 'Jose de la Cruz'))
         self.assertFalse(names_match('Jane Public', 'John Public'))
