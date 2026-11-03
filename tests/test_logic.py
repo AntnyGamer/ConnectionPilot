@@ -61,6 +61,8 @@ class LogicTests(unittest.TestCase):
         self.assertTrue(names_match("Jane Example", "Dr. Jane Example (She/Her)"))
         self.assertFalse(names_match("Jane Example", "Jane Different (She/Her)"))
         self.assertFalse(names_match("Jane Example (Former)", "Jane Example"))
+        self.assertTrue(names_match("李 小龙", "李 小龙"))
+        self.assertFalse(names_match("李 小龙", "王 小龙"))
 
     def test_name_validation(self):
         self.assertTrue(names_match('José de la Cruz', 'Jose de la Cruz'))
