@@ -65,15 +65,26 @@ def check_protection(page):
     for surface in warning_surfaces.all()[:50]:
         if surface.is_visible() and has_stop_signal(surface.inner_text(timeout=3000)):
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
-    # On non-profile pages, a short, standalone warning may be rendered in
-    # main without an alert role. Never scan a person's full profile for it.
-    if normalize_profile(page.url) is None:
-        main = page.locator("main")
-        if main.count():
-            text = main.first.inner_text(timeout=3000).strip()
+    # Some warnings have no dialog/alert role. A short standalone notice
+    # may be the entire main region; do not scan a full profile biography.
+    main = page.locator("main")
+    if main.count():
+        text = main.first.inner_text(timeout=3000).strip()
+        if normalize_profile(page.url) is None:
             first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
-            if len(text) <= 500 and has_stop_signal(first_line):
-                raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
+            warning = len(text) <= 500 and has_stop_signal(first_line)
+        else:
+            explicit = ("you've reached the invitation limit",
+                        "you've reached the weekly invitation limit",
+                        "invitation limit reached", "you're out of invitations",
+                        "your account has been restricted",
+                        "your account has been temporarily restricted", "too many invitations")
+            warning = len(text) <= 250 and any(
+                line.strip().casefold().replace("’", "'").startswith(explicit)
+                for line in text.splitlines()
+            )
+        if warning:
+            raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
 
 def wait_or_stop(seconds, stop_event, pause_event, status):
