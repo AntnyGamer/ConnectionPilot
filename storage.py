@@ -124,11 +124,16 @@ class Store:
         """Retry only pre-click layout failures after updating detection, not invites."""
         with self._conn() as db:
             cur = db.execute("""UPDATE profiles SET status='queued', reason='', updated_at=?
-                WHERE status='skipped' AND (
-                  reason LIKE 'Profile name missing from header; nothing clicked.%'
-                  OR reason LIKE 'Could not identify LinkedIn profile header; nothing clicked.%'
-                  OR reason LIKE 'No Connect option in profile header.%'
-                )""", (self._now(),))
+                WHERE status='skipped'
+                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)
+                  AND (
+                    reason LIKE 'Profile name missing from header; nothing clicked.%'
+                    OR reason LIKE 'Could not identify LinkedIn profile header; nothing clicked.%'
+                    OR reason LIKE 'No Connect option in profile header.%'
+                    OR reason LIKE 'Name mismatch: couldn\'t identify one verified profile heading; nothing clicked.%'
+                    OR reason LIKE 'Verified profile name, but couldn\'t locate its own action panel.%'
+                    OR reason LIKE 'No Connect option in verified profile introduction.%'
+                  )""", (self._now(),))
             return cur.rowcount
 
     def setting(self, key, default=None):
