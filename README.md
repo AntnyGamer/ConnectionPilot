@@ -137,7 +137,9 @@ See [GitHub repository protection setup](.github/PROTECTIONS.md) for the
 - `github/codeql-action@v4` — latest supported major version.
 
 The Windows launcher reads the pins directly from `requirements.txt` so
-Dependabot updates remain in sync with runtime installation. A Playwright
+Dependabot updates remain in sync with runtime installation. The Windows-only
+PyInstaller build dependency is separately pinned in `requirements-build.txt`
+so Dependabot can also monitor its updates. A Playwright
 upgrade also installs its corresponding Chromium browser if it is missing.
 Release checks are performed with offline tests; signed-in LinkedIn behavior
 requires separate real-world verification.
