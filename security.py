@@ -26,7 +26,10 @@ def is_trusted_linkedin_page(url: str) -> bool:
 
 def safe_diagnostic(error: BaseException, limit: int = 160) -> str:
     """Avoid copying raw multi-line browser diagnostics and URL tokens to logs."""
-    text = str(error).splitlines()[0].strip()
+    lines = str(error).splitlines()
+    text = lines[0].strip() if lines else ""
+    if not text:
+        text = type(error).__name__
     # Browser errors occasionally include links with OAuth state, codes or tokens.
     text = re.sub(r"https?://\S+", "[URL redacted]", text, flags=re.I)
     text = re.sub(r"(?i)\b(?:authorization|cookie|token|password|secret|session)\b\s*[:=]\s*\S+",
