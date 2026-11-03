@@ -3,6 +3,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -82,7 +83,13 @@ class QueueTests(unittest.TestCase):
             url = 'https://www.linkedin.com/search/results/people/'
             def goto(self, *a, **kw): pass
             def wait_for_timeout(self, *a): pass
-            def locator(self, selector): return Body() if selector == 'body' else Anchors()
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                if selector == 'main':
+                    return SimpleNamespace(count=lambda: 1,
+                        first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
+                return SimpleNamespace(all=lambda: [])
 
         original_add = self.store.add
         def first_add(*args):
@@ -125,7 +132,13 @@ class QueueTests(unittest.TestCase):
             url = 'https://www.linkedin.com/search/results/people/'
             def goto(self, *args, **kwargs): pass
             def wait_for_timeout(self, *args, **kwargs): pass
-            def locator(self, selector): return Body() if selector == 'body' else Anchors()
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                if selector == 'main':
+                    return SimpleNamespace(count=lambda: 1,
+                        first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
+                return SimpleNamespace(all=lambda: [])
 
         messages = []
         added = collect_results(Page(), self.store, ['government'], ['policy'],
