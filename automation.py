@@ -99,7 +99,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         if pause_event is not None and pause_event.is_set():
             return added
         key = "page:" + search
-        page_no = int(store.setting(key, "1"))
+        try:
+            page_no = int(store.setting(key, "1"))
+        except (TypeError, ValueError, OverflowError):
+            page_no = 1
+        if page_no < 1:
+            page_no = 1
         if page_no > 15:
             continue
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
