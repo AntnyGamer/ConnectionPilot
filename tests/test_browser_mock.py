@@ -361,6 +361,30 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.total_attempts(), 0)
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
 
+    def test_connected_member_with_security_bio_is_skipped_not_restricted(self):
+        doc = html("""<span>1st</span><p>Works on CAPTCHA and unusual activity detection.</p>
+          <button>Message</button><button id="connect">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('first-degree', reason)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
+
+    def test_explicit_first_degree_search_result_is_not_queued(self):
+        doc = """<html><body><main><div>
+          <a href='/in/connected-member/'>Connected Member</a>
+          <p>1st degree connection. Government public policy analyst working in New Jersey</p>
+          </div></main></body></html>"""
+        class SearchPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
+        added = collect_results(SearchPage(self.page), self.db, ['government'], ['policy'],
+                                threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:government'), '2')
+
     def test_visible_restriction_alert_still_halts_before_click(self):
         doc = html("""<div role="alert">You've reached the invitation limit</div>
           <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
