@@ -344,6 +344,38 @@ class BrowserMockTests(unittest.TestCase):
         self.assertTrue(self.db.has_attempt(MOCK_URL))
         self.assertIsNone(self.db.next_profile())
 
+    def test_professional_security_terms_are_not_account_restrictions(self):
+        doc = html("""<p>Investigated unusual activity, CAPTCHA systems,
+          and security verification for a temporarily restricted test environment.</p>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
+    def test_existing_first_degree_connection_is_never_invited(self):
+        doc = html("""<span>1st</span><button>Message</button>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('first-degree connection', reason)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
+
+    def test_visible_restriction_alert_still_halts_before_click(self):
+        doc = html("""<div role="alert">You've reached the invitation limit</div>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
+
+    def test_hidden_restriction_alert_does_not_halt(self):
+        doc = html("""<div role="alert" hidden>You've reached the invitation limit</div>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
     def test_pending_is_skipped(self):
         result, _ = self.run_mock(html('<button>Pending</button>'))
         self.assertEqual(result, 'skipped')
