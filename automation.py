@@ -12,8 +12,8 @@ from google_login import browser_profile, find_browser, SUPPORTED
 from security import is_trusted_linkedin_page, safe_diagnostic
 
 from logic import (has_stop_signal, in_work_hours, local_now, match_score,
-                   clean_terms, names_match, normalize_profile, passes_profile_filters, seconds_until_next_send, seconds_until_tomorrow,
-                   seconds_until_work_hours)
+                   clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
+                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours)
 
 class StopRun(Exception):
     pass
@@ -155,13 +155,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   }
                   return (el.innerText||'').trim();
                 }""") or ""
-                name = (anchor.inner_text(timeout=1200) or "").strip().split("\n")[0].strip()
-                # A valid profile URL is not enough: action links can point to
-                # members without providing a name. Only identified members
-                # establish that this search page was actually inspected.
-                if not name or len(name) > 90 or name.casefold() in {
-                    "view profile", "view full profile", "connect", "follow", "message", "see profile"
-                }:
+                name = search_result_name(anchor.inner_text(timeout=1200) or "")
+                if not name:
+                    name = search_result_name("", anchor.get_attribute("aria-label") or "")
+                # Only an identifiable member name establishes that this
+                # search result was inspected, not a generic profile action.
+                if not name:
                     continue
                 named_profile_links.add(url)
                 score = match_score(snippet, match_terms)
@@ -210,23 +209,37 @@ def _profile_intro(page, expected_name):
     if not main.count():
         return None, "No LinkedIn main profile region found."
 
-    # Modern LinkedIn layouts can render the name as h2 rather than h1;
-    # don't depend on the first <section> in <main>.
+    # A genuine member title provides a second identity check. Generic
+    # LinkedIn titles are ignored, but a named title must not contradict
+    # the discovered member even if a recommendation has the same name.
+    title = (page.title() or "").strip()
+    title_match = re.fullmatch(r"(.+?)\s*[|–-]\s*LinkedIn", title, flags=re.I)
+    title_name = ""
+    if title_match:
+        title_name = re.split(r"\s+[-–—]\s+", title_match.group(1).strip(), maxsplit=1)[0].strip()
+        if title_name.casefold() in {"linkedin", "profile", "linkedin member"}:
+            title_name = ""
+        elif not names_match(expected_name, title_name):
+            return None, "Name mismatch: page title identifies another member; nothing clicked."
+
     matching = []
-    for heading in main.locator('h1, h2, [role="heading"]').all()[:50]:
-        if heading.is_visible() and names_match(expected_name, heading.inner_text(timeout=3000).strip()):
+    for heading in main.locator('h1, h2, h3, [role="heading"]').all()[:60]:
+        if (not heading.locator("xpath=ancestor::aside").count()
+                and heading.is_visible()
+                and names_match(expected_name, heading.inner_text(timeout=3000).strip())):
             matching.append(heading)
+    if not matching and title_name:
+        # Newer layouts sometimes place the name in plain text rather
+        # than a heading. Require title corroboration and one candidate.
+        for selector, limit in (("p", 80), ("span", 120)):
+            matching = [node for node in main.locator(selector).all()[:limit]
+                        if not node.locator("xpath=ancestor::aside").count()
+                        and node.is_visible()
+                        and names_match(expected_name, node.inner_text(timeout=2000).strip())]
+            if matching:
+                break
     if len(matching) != 1:
-        # Some SDUI variations render the name as a <p>. Only accept this
-        # fallback if the page's own title corroborates the exact full name.
-        title = page.title()
-        title_name = re.split(r"\s*[|–-]\s*LinkedIn\s*$", title, flags=re.I)[0].strip()
-        if not names_match(expected_name, title_name):
-            return None, "Name mismatch: couldn't verify the discovered person against the profile heading or title; nothing clicked."
-        matching = [node for node in main.locator('p').all()[:80]
-                    if node.is_visible() and names_match(expected_name, node.inner_text(timeout=2000).strip())]
-        if len(matching) != 1:
-            return None, "Profile heading unavailable or ambiguous; nothing clicked."
+        return None, "Name mismatch: couldn't identify one verified profile heading; nothing clicked."
     name_heading = matching[0]
 
     # Choose the *smallest* named introduction containing the person's own
