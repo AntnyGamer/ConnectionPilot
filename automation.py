@@ -12,8 +12,8 @@ from google_login import browser_profile, find_browser, SUPPORTED
 from security import is_trusted_linkedin_page, safe_diagnostic
 
 from logic import (has_stop_signal, in_work_hours, local_now, match_score,
-                   clean_terms, names_match, normalize_profile, passes_profile_filters, seconds_until_next_send, seconds_until_tomorrow,
-                   seconds_until_work_hours)
+                   clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
+                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours)
 
 class StopRun(Exception):
     pass
@@ -93,13 +93,20 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
+    minimum_score = (filters or {}).get("min_score", 1)
+    exclusions = None
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
         if pause_event is not None and pause_event.is_set():
             return added
         key = "page:" + search
-        page_no = int(store.setting(key, "1"))
+        try:
+            page_no = int(store.setting(key, "1"))
+        except (TypeError, ValueError, OverflowError):
+            page_no = 1
+        if page_no < 1:
+            page_no = 1
         if page_no > 15:
             continue
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
@@ -113,9 +120,11 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # Profile links inside visible main-content search results.
         anchors = page.locator('main a[href*="/in/"]')
         # A slow-loading result list is not proof that the search is exhausted.
-        if not anchors.count():
+        anchor_count = anchors.count()
+        if not anchor_count:
             try:
                 anchors.first.wait_for(state="attached", timeout=6000)
+                anchor_count = anchors.count()
             except Exception:
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
@@ -126,7 +135,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
         paused_during_page = False
-        for i in range(anchors.count()):
+        for i in range(anchor_count):
             if stop_event.is_set():
                 raise StopRun()
             if pause_event is not None and pause_event.is_set():
@@ -142,6 +151,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 valid_profile_links.add(url)
                 if url in seen_this_page:
                     continue
+                name = search_result_name(anchor.inner_text(timeout=1200) or "")
+                if not name:
+                    name = search_result_name("", anchor.get_attribute("aria-label") or "")
+                # Ignore generic profile actions before reading surrounding
+                # card text. They are not identified people.
+                if not name:
+                    continue
+                named_profile_links.add(url)
                 # Search UI changes frequently. Use nearest card with enough text.
                 snippet = anchor.evaluate("""el => {
                   let n=el; for(let j=0;j<6 && n;j++, n=n.parentElement){
@@ -150,20 +167,15 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   }
                   return (el.innerText||'').trim();
                 }""") or ""
-                name = (anchor.inner_text(timeout=1200) or "").strip().split("\n")[0].strip()
-                # A valid profile URL is not enough: action links can point to
-                # members without providing a name. Only identified members
-                # establish that this search page was actually inspected.
-                if not name or len(name) > 90 or name.casefold() in {
-                    "view profile", "view full profile", "connect", "follow", "message", "see profile"
-                }:
-                    continue
-                named_profile_links.add(url)
                 score = match_score(snippet, match_terms)
-                if score < max(0, int((filters or {}).get("min_score", 1))):
+                if score < max(0, int(minimum_score)):
                     continue
-                if any(x in snippet.casefold() for x in clean_terms((filters or {}).get("exclude")) if x):
-                    continue
+                if exclusions is None:
+                    exclusions = clean_terms((filters or {}).get("exclude"))
+                if exclusions:
+                    folded_snippet = snippet.casefold()
+                    if any(term in folded_snippet for term in exclusions):
+                        continue
                 seen_this_page.add(url)
                 if store.add(url, name, snippet, score):
                     added += 1
@@ -205,23 +217,39 @@ def _profile_intro(page, expected_name):
     if not main.count():
         return None, "No LinkedIn main profile region found."
 
-    # Modern LinkedIn layouts can render the name as h2 rather than h1;
-    # don't depend on the first <section> in <main>.
+    # A genuine member title provides a second identity check. Generic
+    # LinkedIn titles are ignored, but a named title must not contradict
+    # the discovered member even if a recommendation has the same name.
+    title = (page.title() or "").strip()
+    title_match = re.fullmatch(r"(.+?)\s*[|–-]\s*LinkedIn", title, flags=re.I)
+    title_name = ""
+    if title_match:
+        title_name = re.split(r"\s+[-–—]\s+", title_match.group(1).strip(), maxsplit=1)[0].strip()
+        if title_name.casefold() in {"linkedin", "profile", "linkedin member"}:
+            title_name = ""
+        elif not names_match(expected_name, title_name):
+            return None, "Name mismatch: page title identifies another member; nothing clicked."
+
     matching = []
-    for heading in main.locator('h1, h2, [role="heading"]').all()[:50]:
-        if heading.is_visible() and names_match(expected_name, heading.inner_text(timeout=3000).strip()):
-            matching.append(heading)
+    for selector in ('h1, h2, [role="heading"]', 'h3'):
+        matching = [heading for heading in main.locator(selector).all()[:60]
+                    if not heading.locator("xpath=ancestor::aside").count()
+                    and heading.is_visible()
+                    and names_match(expected_name, heading.inner_text(timeout=3000).strip())]
+        if matching:
+            break
+    if not matching and title_name:
+        # Newer layouts sometimes place the name in plain text rather
+        # than a heading. Require title corroboration and one candidate.
+        for selector, limit in (("p", 80), ("span", 120)):
+            matching = [node for node in main.locator(selector).all()[:limit]
+                        if not node.locator("xpath=ancestor::aside").count()
+                        and node.is_visible()
+                        and names_match(expected_name, node.inner_text(timeout=2000).strip())]
+            if matching:
+                break
     if len(matching) != 1:
-        # Some SDUI variations render the name as a <p>. Only accept this
-        # fallback if the page's own title corroborates the exact full name.
-        title = page.title()
-        title_name = re.split(r"\s*[|–-]\s*LinkedIn\s*$", title, flags=re.I)[0].strip()
-        if not names_match(expected_name, title_name):
-            return None, "Name mismatch: couldn't verify the discovered person against the profile heading or title; nothing clicked."
-        matching = [node for node in main.locator('p').all()[:80]
-                    if node.is_visible() and names_match(expected_name, node.inner_text(timeout=2000).strip())]
-        if len(matching) != 1:
-            return None, "Profile heading unavailable or ambiguous; nothing clicked."
+        return None, "Name mismatch: couldn't identify one verified profile heading; nothing clicked."
     name_heading = matching[0]
 
     # Choose the *smallest* named introduction containing the person's own
@@ -238,7 +266,7 @@ def _profile_intro(page, expected_name):
             # A broad layout wrapper may include suggestions for OTHER people.
             # Do not use its Connect button as the verified person's control.
             # Failing closed here is safer than inviting the wrong recipient.
-            headings = current.locator('h1, h2, [role="heading"]').all()[:50]
+            headings = current.locator('h1, h2, h3, [role="heading"]').all()[:50]
             if any(h.is_visible() and not names_match(expected_name, h.inner_text(timeout=2000).strip())
                    for h in headings):
                 return None, "Action panel also contains other headings; nothing clicked."

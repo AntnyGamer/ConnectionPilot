@@ -7,10 +7,18 @@ import bootstrap
 
 class DependencyTests(unittest.TestCase):
     def test_pins_match_requirements_file(self):
-        self.assertEqual(bootstrap.pinned_dependencies(), {
-            "playwright": "1.64.1",
-            "tzdata": "2026.6",
-        })
+        pins = bootstrap.pinned_dependencies()
+        contents = (bootstrap.BASE_DIR / "requirements.txt").read_text(encoding="utf-8")
+        expected = {}
+        for raw in contents.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line:
+                name, separator, wanted = line.partition("==")
+                self.assertEqual(separator, "==")
+                expected[name.strip()] = wanted.strip()
+        self.assertEqual(pins, expected)
+        self.assertIn("playwright", pins)
+        self.assertIn("tzdata", pins)
 
     def test_invalid_pin_is_rejected(self):
         from unittest.mock import Mock

@@ -1,7 +1,7 @@
 """Local SQLite storage; no account passwords or session cookies are stored here."""
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from security import restrict_posix_data
@@ -22,11 +22,14 @@ class Store:
                     discovered_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     reason TEXT NOT NULL DEFAULT ''
                 );
+                CREATE INDEX IF NOT EXISTS profiles_queue_priority
+                    ON profiles(score DESC, discovered_at ASC) WHERE status='queued';
                 CREATE TABLE IF NOT EXISTS attempts (
                     url TEXT PRIMARY KEY, initiated_at TEXT NOT NULL,
                     result TEXT NOT NULL, FOREIGN KEY(url) REFERENCES profiles(url)
                 );
                 CREATE INDEX IF NOT EXISTS attempts_by_time ON attempts(initiated_at);
+                CREATE INDEX IF NOT EXISTS attempts_by_instant ON attempts(julianday(initiated_at));
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,
@@ -115,17 +118,25 @@ class Store:
     def requeue_filtered(self):
         """Reconsider previously filtered profiles only when filters change."""
         with self._conn() as db:
-            db.execute("UPDATE profiles SET status='queued', reason='', updated_at=? WHERE status='filtered'", (self._now(),))
+            db.execute("""UPDATE profiles SET status='queued', reason='', updated_at=?
+                WHERE status='filtered'
+                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
+                (self._now(),))
 
     def requeue_layout_skips(self):
         """Retry only pre-click layout failures after updating detection, not invites."""
         with self._conn() as db:
             cur = db.execute("""UPDATE profiles SET status='queued', reason='', updated_at=?
-                WHERE status='skipped' AND (
-                  reason LIKE 'Profile name missing from header; nothing clicked.%'
-                  OR reason LIKE 'Could not identify LinkedIn profile header; nothing clicked.%'
-                  OR reason LIKE 'No Connect option in profile header.%'
-                )""", (self._now(),))
+                WHERE status='skipped'
+                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)
+                  AND (
+                    reason LIKE 'Profile name missing from header; nothing clicked.%'
+                    OR reason LIKE 'Could not identify LinkedIn profile header; nothing clicked.%'
+                    OR reason LIKE 'No Connect option in profile header.%'
+                    OR reason LIKE 'Name mismatch: couldn''t identify one verified profile heading; nothing clicked.%'
+                    OR reason LIKE 'Verified profile name, but couldn''t locate its own action panel.%'
+                    OR reason LIKE 'No Connect option in verified profile introduction.%'
+                  )""", (self._now(),))
             return cur.rowcount
 
     def setting(self, key, default=None):
@@ -142,10 +153,17 @@ class Store:
             db.execute("INSERT INTO events(at, event, detail) VALUES (?, ?, ?)",
                        (self._now(), event, detail[:500]))
 
+    @staticmethod
+    def _today_bounds():
+        day = datetime.now(TZ).date()
+        return day.isoformat() + "T", (day + timedelta(days=1)).isoformat() + "T"
+
     def sent_today(self):
-        day = datetime.now(TZ).date().isoformat()
+        start, end = self._today_bounds()
         with self._conn() as db:
-            return db.execute("SELECT count(*) FROM attempts WHERE result='sent' AND substr(initiated_at,1,10)=?", (day,)).fetchone()[0]
+            return db.execute("""SELECT count(*) FROM attempts
+                WHERE result='sent' AND initiated_at >= ? AND initiated_at < ?""",
+                (start, end)).fetchone()[0]
 
     def total_attempts(self):
         """Count every potentially sending click, regardless of its final UI status."""
@@ -167,9 +185,11 @@ class Store:
 
     def attempts_today(self):
         """Conservatively count unverified clicks as possible invitations."""
-        day = datetime.now(TZ).date().isoformat()
+        start, end = self._today_bounds()
         with self._conn() as db:
-            return db.execute("SELECT count(*) FROM attempts WHERE substr(initiated_at,1,10)=?", (day,)).fetchone()[0]
+            return db.execute("""SELECT count(*) FROM attempts
+                WHERE initiated_at >= ? AND initiated_at < ?""",
+                (start, end)).fetchone()[0]
 
     def last_attempt_at(self):
         """Select the latest instant, including across DST and legacy imports.

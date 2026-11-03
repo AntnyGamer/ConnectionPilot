@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from logic import (has_stop_signal, names_match, in_work_hours, local_now, match_score, normalize_profile,
+from logic import (has_stop_signal, names_match, search_result_name, in_work_hours, local_now, match_score, normalize_profile,
                    passes_profile_filters, theoretical_daily_capacity, valid_cooldown_seconds,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int)
 from storage import Store
@@ -47,6 +47,29 @@ class LogicTests(unittest.TestCase):
         sample = 'Analyst working in politics'
         self.assertFalse(passes_profile_filters(sample, 'Analyst', {'locations':'New Jersey'}, ['politic'])[0])
         self.assertTrue(passes_profile_filters(sample, 'Analyst', {'min_score':0}, ['legislative'])[0])
+    def test_search_names_from_visible_and_accessible_labels(self):
+        self.assertEqual(search_result_name("Jane Example"), "Jane Example")
+        self.assertEqual(search_result_name("View profile", "View Jane Example's profile"), "Jane Example")
+        self.assertEqual(search_result_name("View Jane Example’s profile"), "Jane Example")
+        self.assertEqual(search_result_name("Connect", "Open José de la Cruz's profile"), "José de la Cruz")
+        self.assertIsNone(search_result_name("View profile", "View profile"))
+        self.assertIsNone(search_result_name("Connect", "Send a message"))
+        self.assertIsNone(search_result_name("View profile", "Send Jane Example a message"))
+        for generic in ("View full profile", "View public profile", "See full profile",
+                        "Open full profile", "View member profile", "View their profile",
+                        "See my profile", "Open this profile"):
+            with self.subTest(generic=generic):
+                self.assertIsNone(search_result_name(generic))
+                self.assertIsNone(search_result_name("View profile", generic))
+
+    def test_name_decorations_do_not_change_identity(self):
+        self.assertTrue(names_match("Senator José de la Cruz (He/Him)", "Jose de la Cruz"))
+        self.assertTrue(names_match("Jane Example", "Dr. Jane Example (She/Her)"))
+        self.assertFalse(names_match("Jane Example", "Jane Different (She/Her)"))
+        self.assertFalse(names_match("Jane Example (Former)", "Jane Example"))
+        self.assertTrue(names_match("李 小龙", "李 小龙"))
+        self.assertFalse(names_match("李 小龙", "王 小龙"))
+
     def test_name_validation(self):
         self.assertTrue(names_match('José de la Cruz', 'Jose de la Cruz'))
         self.assertFalse(names_match('Jane Public', 'John Public'))
@@ -175,6 +198,21 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(self.db.next_profile())
         self.db.requeue_filtered()
         self.assertEqual(self.db.next_profile()['url'], a)
+    def test_filter_change_never_requeues_an_attempted_profile(self):
+        unattempted = 'https://www.linkedin.com/in/preclick-filtered/'
+        attempted = 'https://www.linkedin.com/in/attempted-filtered/'
+        self.db.add(unattempted, 'Filtered Person', 'policy', 25)
+        self.db.add(attempted, 'Attempted Person', 'policy', 25)
+        self.db.mark(unattempted, 'filtered', 'Title does not match')
+        self.db.mark(attempted, 'uncertain', 'Potential click')
+        self.db.mark(attempted, 'filtered', 'Late filter status')
+        self.db.requeue_filtered()
+        self.assertEqual(self.db.next_profile()['url'], unattempted)
+        with self.db._conn() as conn:
+            row = conn.execute('SELECT status FROM profiles WHERE url=?', (attempted,)).fetchone()
+        self.assertEqual(row[0], 'filtered')
+        self.assertTrue(self.db.has_attempt(attempted))
+
     def test_uncertain_attempt_counts_toward_daily_cap_and_cooldown(self):
         a='https://www.linkedin.com/in/alice/'
         b='https://www.linkedin.com/in/bob/'
@@ -204,6 +242,29 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.counts().get('uncertain'), 1)
         self.assertEqual(self.db.counts().get('sent'), 1)
         self.assertEqual(self.db.requeue_layout_skips(), 0)
+
+    def test_new_layout_skips_requeue_only_without_an_invitation_attempt(self):
+        cases = (
+            ("name-layout", "Name mismatch: couldn't identify one verified profile heading; nothing clicked."),
+            ("action-layout", "Verified profile name, but couldn't locate its own action panel. Nothing clicked."),
+            ("connect-layout", "No Connect option in verified profile introduction."),
+        )
+        for slug, reason in cases:
+            url = 'https://www.linkedin.com/in/' + slug + '/'
+            self.db.add(url, slug, 'government', 25)
+            self.db.mark(url, 'skipped', reason)
+        attempted = 'https://www.linkedin.com/in/layout-after-click/'
+        self.db.add(attempted, 'Attempted Person', 'government', 25)
+        self.db.mark(attempted, 'uncertain', 'Potential click recorded')
+        self.db.mark(attempted, 'skipped', cases[0][1])
+        self.assertEqual(self.db.requeue_layout_skips(), len(cases))
+        self.assertEqual(self.db.requeue_layout_skips(), 0)
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM profiles WHERE url=?", (attempted,)).fetchone()[0],
+                             'skipped')
+            self.assertEqual(conn.execute("SELECT count(*) FROM profiles WHERE status='queued'").fetchone()[0],
+                             len(cases))
+        self.assertTrue(self.db.has_attempt(attempted))
 
     def test_attempt_timestamp_survives_confirmation_and_later_updates(self):
         from datetime import timedelta
@@ -245,6 +306,44 @@ class StorageTests(unittest.TestCase):
         self.db.reset_search_pages(['politics'])
         self.assertEqual(self.db.setting('page:politics', '1'), '1')
         self.assertEqual(self.db.setting('page:government'), '8')
+
+    def test_queued_candidate_selection_uses_priority_index(self):
+        with self.db._conn() as conn:
+            plan = conn.execute("""EXPLAIN QUERY PLAN SELECT * FROM profiles
+                WHERE status='queued' AND NOT EXISTS (
+                    SELECT 1 FROM attempts WHERE attempts.url=profiles.url)
+                ORDER BY score DESC, discovered_at ASC LIMIT 1""").fetchall()
+        self.assertTrue(any('USING INDEX profiles_queue_priority' in row[3]
+                            for row in plan), plan)
+
+    def test_local_day_count_includes_both_dst_offsets(self):
+        from unittest.mock import patch
+        dates = (
+            ('october', '2026-10-31T23:59:00-04:00', 'sent'),
+            ('first', '2026-11-01T01:55:00-04:00', 'uncertain'),
+            ('second', '2026-11-01T01:05:00-05:00', 'sent'),
+            ('tomorrow', '2026-11-02T00:00:00-05:00', 'sent'),
+        )
+        for label, instant, status in dates:
+            url = 'https://www.linkedin.com/in/' + label + '/'
+            self.db.add(url, label, 'government', 25)
+            with patch.object(self.db, '_now', return_value=instant):
+                self.db.mark(url, status, 'Recorded attempt')
+        with patch.object(self.db, '_today_bounds',
+                          return_value=('2026-11-01T', '2026-11-02T')):
+            self.assertEqual(self.db.attempts_today(), 2)
+            self.assertEqual(self.db.sent_today(), 1)
+        with patch.object(self.db, '_today_bounds',
+                          return_value=('2026-11-02T', '2026-11-03T')):
+            self.assertEqual(self.db.attempts_today(), 1)
+            self.assertEqual(self.db.sent_today(), 1)
+
+    def test_last_attempt_uses_chronological_index(self):
+        # Local timestamp text alone is not chronological across UTC offsets.
+        with self.db._conn() as conn:
+            plan = conn.execute("""EXPLAIN QUERY PLAN SELECT initiated_at FROM attempts
+                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchall()
+        self.assertTrue(any('USING INDEX attempts_by_instant' in row[3] for row in plan), plan)
 
     def test_attempt_order_across_dst_fallback(self):
         # Local 01:05 -05:00 occurs *after* local 01:55 -04:00.

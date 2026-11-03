@@ -110,7 +110,8 @@ class QueueTests(unittest.TestCase):
         class ActionLink:
             def is_visible(self, **kwargs): return True
             def get_attribute(self, _): return '/in/real-user-123/'
-            def evaluate(self, _): return 'Policy analyst government legislature professional'
+            def evaluate(self, _):
+                raise AssertionError('Unnamed action links must not trigger card extraction')
             def inner_text(self, **kwargs): return 'Connect'
 
         class Anchors:

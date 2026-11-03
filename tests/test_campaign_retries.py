@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from automation import ProtectionScreen, StopRun, check_protection, run_campaign
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, run_campaign
 from logic import TZ
 from storage import Store
 
@@ -45,6 +45,21 @@ class WorkerRecoveryTests(unittest.TestCase):
             with self.assertRaises(StopRun):
                 run_campaign(self.store, self.config, self.stop, self.pause, self.status.append, lambda: None)
             return sleeper.call_count
+
+    def test_invalid_search_page_restarts_at_first_page(self):
+        self.page.wait_for_timeout = MagicMock()
+        anchors = MagicMock()
+        anchors.count.return_value = 0
+        anchors.first.wait_for.side_effect = TimeoutError("no results")
+        self.page.locator = MagicMock(return_value=anchors)
+        for saved in ("invalid", "-4", "1.5"):
+            with self.subTest(saved=saved):
+                self.store.set_setting("page:political science", saved)
+                with patch('automation.check_protection'):
+                    self.assertEqual(collect_results(
+                        self.page, self.store, ['political science'], ['politic'],
+                        self.stop, self.status.append, 10), 0)
+                self.assertIn("page=1", self.page.goto.call_args.args[0])
 
     def test_empty_search_retried_twice_before_halt(self):
         with patch('automation.collect_results', return_value=0) as collect:

@@ -27,9 +27,9 @@ restrict_posix_data(APP_DIR)
 STORE = Store(APP_DIR / "connectionpilot.sqlite3")
 # New profile layouts made the old pre-click header check skip valid people.
 # Retry ONLY those safe, confirmed-not-clicked cases, once per upgrade.
-if STORE.setting("migration:layout_v7") != "1":
+if STORE.setting("migration:layout_v8") != "1":
     STORE.requeue_layout_skips()
-    STORE.set_setting("migration:layout_v7", "1")
+    STORE.set_setting("migration:layout_v8", "1")
 # Migrate the original prototype's 8/day default; retain other custom caps.
 if STORE.setting("ui:settings_version") != "2":
     if STORE.setting("ui:daily") == "8":

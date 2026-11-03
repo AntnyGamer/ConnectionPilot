@@ -57,22 +57,45 @@ def normalize_profile(url: str) -> str | None:
         return None
 
 
+def search_result_name(text: str, label: str = "") -> str | None:
+    """Read a visible member name or an explicit accessible profile-link label."""
+    generic = {"connect", "follow", "message"}
+    generic_profile = r"(?:view|see|open)\s+(?:(?:full|public|member|linkedin|their|my|your|this)\s+)?profile"
+    lines = (text or "").splitlines()
+    visible = " ".join(lines[0].split()) if lines else ""
+    pattern = r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile"
+    if visible.casefold() not in generic and not re.fullmatch(generic_profile, visible, flags=re.I):
+        match = re.fullmatch(pattern, visible, flags=re.I)
+        name = match.group(1).strip() if match else visible
+        if name and len(name) <= 90 and name.casefold() not in generic:
+            return name
+    accessible_text = " ".join((label or "").split())
+    if accessible_text.casefold() not in generic and not re.fullmatch(generic_profile, accessible_text, flags=re.I):
+        accessible = re.fullmatch(pattern, accessible_text, flags=re.I)
+        if accessible:
+            name = accessible.group(1).strip()
+            if name and len(name) <= 90 and name.casefold() not in generic:
+                return name
+    return None
+
+
 def names_match(discovered: str, displayed: str) -> bool:
-    """Require the discovered name to match the actual profile heading before sending."""
+    """Require matching full names, allowing only common display decorations."""
     def normalized(value):
-        value = unicodedata.normalize("NFKD", value or "").casefold()
+        value = re.sub(
+            r"\s*\((?:he|him|she|her|they|them)(?:\s*/\s*(?:he|him|she|her|they|them))+\)\s*$",
+            "", value or "", flags=re.I
+        )
+        value = unicodedata.normalize("NFKD", value).casefold()
         value = "".join(c for c in value if not unicodedata.combining(c))
-        return " ".join(re.findall(r"[a-z0-9]+", value))
+        words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
+        prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
+                    "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+        while len(words) >= 3 and words[0] in prefixes:
+            words.pop(0)
+        return " ".join(words)
     expected, actual = normalized(discovered), normalized(displayed)
-    if expected == actual:
-        return bool(expected)
-    # LinkedIn's search card can include a professional honorific that the
-    # member's profile omits. Strip only well-known *leading* honorifics.
-    prefixes = {"assemblywoman", "assemblyman", "senator", "representative", "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
-    words = expected.split()
-    while words and words[0] in prefixes:
-        words.pop(0)
-    return bool(actual) and len(words) >= 2 and " ".join(words) == actual
+    return bool(expected) and expected == actual
 
 
 def match_score(snippet: str, terms: list[str] | None = None) -> int:
