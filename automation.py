@@ -93,6 +93,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
+    minimum_score = max(0, int((filters or {}).get("min_score", 1)))
+    exclusions = clean_terms((filters or {}).get("exclude"))
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
@@ -118,9 +120,11 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # Profile links inside visible main-content search results.
         anchors = page.locator('main a[href*="/in/"]')
         # A slow-loading result list is not proof that the search is exhausted.
-        if not anchors.count():
+        anchor_count = anchors.count()
+        if not anchor_count:
             try:
                 anchors.first.wait_for(state="attached", timeout=6000)
+                anchor_count = anchors.count()
             except Exception:
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
@@ -131,7 +135,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
         paused_during_page = False
-        for i in range(anchors.count()):
+        for i in range(anchor_count):
             if stop_event.is_set():
                 raise StopRun()
             if pause_event is not None and pause_event.is_set():
@@ -164,9 +168,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     continue
                 named_profile_links.add(url)
                 score = match_score(snippet, match_terms)
-                if score < max(0, int((filters or {}).get("min_score", 1))):
+                if score < minimum_score:
                     continue
-                if any(x in snippet.casefold() for x in clean_terms((filters or {}).get("exclude")) if x):
+                if exclusions and any(x in snippet.casefold() for x in exclusions):
                     continue
                 seen_this_page.add(url)
                 if store.add(url, name, snippet, score):
