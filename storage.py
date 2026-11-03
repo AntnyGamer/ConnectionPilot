@@ -1,7 +1,7 @@
 """Local SQLite storage; no account passwords or session cookies are stored here."""
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from security import restrict_posix_data
@@ -142,10 +142,17 @@ class Store:
             db.execute("INSERT INTO events(at, event, detail) VALUES (?, ?, ?)",
                        (self._now(), event, detail[:500]))
 
+    @staticmethod
+    def _today_bounds():
+        day = datetime.now(TZ).date()
+        return day.isoformat() + "T", (day + timedelta(days=1)).isoformat() + "T"
+
     def sent_today(self):
-        day = datetime.now(TZ).date().isoformat()
+        start, end = self._today_bounds()
         with self._conn() as db:
-            return db.execute("SELECT count(*) FROM attempts WHERE result='sent' AND substr(initiated_at,1,10)=?", (day,)).fetchone()[0]
+            return db.execute("""SELECT count(*) FROM attempts
+                WHERE result='sent' AND initiated_at >= ? AND initiated_at < ?""",
+                (start, end)).fetchone()[0]
 
     def total_attempts(self):
         """Count every potentially sending click, regardless of its final UI status."""
@@ -167,9 +174,11 @@ class Store:
 
     def attempts_today(self):
         """Conservatively count unverified clicks as possible invitations."""
-        day = datetime.now(TZ).date().isoformat()
+        start, end = self._today_bounds()
         with self._conn() as db:
-            return db.execute("SELECT count(*) FROM attempts WHERE substr(initiated_at,1,10)=?", (day,)).fetchone()[0]
+            return db.execute("""SELECT count(*) FROM attempts
+                WHERE initiated_at >= ? AND initiated_at < ?""",
+                (start, end)).fetchone()[0]
 
     def last_attempt_at(self):
         """Select the latest instant, including across DST and legacy imports.
