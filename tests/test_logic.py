@@ -192,6 +192,21 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(self.db.next_profile())
         self.db.requeue_filtered()
         self.assertEqual(self.db.next_profile()['url'], a)
+    def test_filter_change_never_requeues_an_attempted_profile(self):
+        unattempted = 'https://www.linkedin.com/in/preclick-filtered/'
+        attempted = 'https://www.linkedin.com/in/attempted-filtered/'
+        self.db.add(unattempted, 'Filtered Person', 'policy', 25)
+        self.db.add(attempted, 'Attempted Person', 'policy', 25)
+        self.db.mark(unattempted, 'filtered', 'Title does not match')
+        self.db.mark(attempted, 'uncertain', 'Potential click')
+        self.db.mark(attempted, 'filtered', 'Late filter status')
+        self.db.requeue_filtered()
+        self.assertEqual(self.db.next_profile()['url'], unattempted)
+        with self.db._conn() as conn:
+            row = conn.execute('SELECT status FROM profiles WHERE url=?', (attempted,)).fetchone()
+        self.assertEqual(row[0], 'filtered')
+        self.assertTrue(self.db.has_attempt(attempted))
+
     def test_uncertain_attempt_counts_toward_daily_cap_and_cooldown(self):
         a='https://www.linkedin.com/in/alice/'
         b='https://www.linkedin.com/in/bob/'
