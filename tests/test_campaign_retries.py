@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from automation import ProtectionScreen, StopRun, check_protection, run_campaign
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, run_campaign
 from logic import TZ
 from storage import Store
 
