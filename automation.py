@@ -358,6 +358,14 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     header, error = _profile_intro(page, profile["name"])
     if header is None:
         return "skipped", error
+    # Check relationship before applying interest filters. Existing
+    # connections should always be skipped, not relabeled as filtered.
+    intro_text = header.inner_text(timeout=5000)
+    if re.search(r"\b1st(?:[-\s]*degree(?:[-\s]*connection)?)?\b", intro_text, re.I):
+        return "skipped", "Already a first-degree connection; no invitation needed."
+    for label in ("Pending", "Remove connection"):
+        if find_first_action(header, label):
+            return "skipped", f"Already connected or invitation pending ({label})."
     if filters is not None:
         try:
             # Check the selected person's actual visible profile before inviting.
@@ -369,16 +377,6 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
                 return "filtered", reason
         except Exception:
             return "filtered", "Profile information unavailable; could not verify filters."
-
-    for label in ("Pending", "Remove connection"):
-        if find_first_action(header, label):
-            return "skipped", f"Already connected or invitation pending ({label})."
-
-    # Existing first-degree connections can show a Message button and even
-    # a More menu. A verified "1st" badge is positive evidence to skip.
-    intro_text = header.inner_text(timeout=5000)
-    if re.search(r"\b1st(?:[-\s]*degree(?:[-\s]*connection)?)?\b", intro_text, re.I):
-        return "skipped", "Already a first-degree connection; no invitation needed."
 
     # Message may coexist with Connect (e.g. open-profile messaging),
     # so it isn't proof of an existing first-degree connection.
