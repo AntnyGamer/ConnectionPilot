@@ -91,6 +91,18 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
         self.assertEqual(self.page.locator('aside button').inner_text(), 'Connect')
 
+    def test_other_person_h3_cannot_supply_target_connect_action(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div>
+          <div><h2>Test Example</h2></div>
+          <div><h3>Other Person</h3>
+          <button id='wrong' onclick="this.textContent='Pending'">Connect</button></div>
+          </div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertEqual(self.page.locator('#wrong').inner_text(), 'Connect')
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_primary_heading_wins_over_matching_recommendation_h3(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div><h2>Test Example</h2>
