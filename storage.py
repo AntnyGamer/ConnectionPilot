@@ -118,7 +118,10 @@ class Store:
     def requeue_filtered(self):
         """Reconsider previously filtered profiles only when filters change."""
         with self._conn() as db:
-            db.execute("UPDATE profiles SET status='queued', reason='', updated_at=? WHERE status='filtered'", (self._now(),))
+            db.execute("""UPDATE profiles SET status='queued', reason='', updated_at=?
+                WHERE status='filtered'
+                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
+                (self._now(),))
 
     def requeue_layout_skips(self):
         """Retry only pre-click layout failures after updating detection, not invites."""
