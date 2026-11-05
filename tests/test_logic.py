@@ -252,6 +252,18 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.setting('ui:daily'), '100')
         self.assertEqual(self.db.setting('ui:browser_channel'), 'chrome')
 
+    def test_processed_urls_exclude_attempted_or_completed_but_not_queued(self):
+        base = "https://www.linkedin.com/in/"
+        self.db.add(base + "pending/", "Pending Person", "policy", 25)
+        self.db.add(base + "finished/", "Finished Person", "policy", 25)
+        self.db.add(base + "attempted/", "Attempted Person", "policy", 25)
+        self.db.mark(base + "finished/", "filtered", "Bad match")
+        self.db.mark(base + "attempted/", "uncertain", "Click may have sent")
+        self.db.mark(base + "attempted/", "queued", "stale state")
+        self.assertEqual(self.db.processed_urls(), {
+            base + "finished/", base + "attempted/"
+        })
+
     def test_dashboard_snapshot_matches_individual_counters(self):
         a = 'https://www.linkedin.com/in/dashboard-a/'
         b = 'https://www.linkedin.com/in/dashboard-b/'
