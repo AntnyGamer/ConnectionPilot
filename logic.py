@@ -10,6 +10,15 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/New_York")
 
+# Used by match_score when no terms are provided explicitly; not a default
+# value for the application's search-term text field.
+DEFAULT_MATCH_TERMS = [
+    "politic", "government", "legislativ", "public policy", "public affairs",
+    "diplomac", "international relations", "campaign", "congress", "civic",
+    "rowan", "senat", "assembly", "public service", "council",
+    "state department", "advocacy", "policy analyst", "staffer",
+]
+
 STOP_PHRASES = [
     "you've reached the invitation limit", "you’ve reached the invitation limit",
     "you've reached the weekly invitation limit", "you’ve reached the weekly invitation limit",
