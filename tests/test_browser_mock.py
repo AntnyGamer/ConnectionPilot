@@ -80,6 +80,77 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
         self.assertEqual(self.page.locator('aside button').inner_text(), 'Connect')
 
+    def test_direct_connect_beside_more_uses_direct_button(self):
+        # More is beside the verified name, while Connect is in a sibling.
+        # The old selector stopped at the More-only wrapper and skipped.
+        doc = """<html><head><title>Test Example | LinkedIn</title></head>
+          <body><main><div class='intro'>
+          <div class='identity'><h2>Test Example</h2>
+          <button id='more' onclick="this.dataset.clicked='yes'">More</button></div>
+          <div class='controls'><button id='connect'
+            onclick="this.textContent='Pending'">Connect</button></div>
+          </div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+        self.assertIsNone(self.page.locator('#more').get_attribute('data-clicked'))
+
+    def test_named_direct_connect_beside_more(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head>
+          <body><main><section><div><h2>Test Example</h2><button id='more'
+          onclick="this.dataset.clicked='yes'">More</button></div>
+          <div><button id='connect' aria-label='Connect with Test Example'
+          onclick="this.setAttribute('aria-label','Pending'); this.textContent='Pending'">Connect</button></div>
+          </section></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+        self.assertIsNone(self.page.locator('#more').get_attribute('data-clicked'))
+
+    def test_more_menu_still_works_without_direct_connect(self):
+        doc = html("""<button id='more' onclick="document.getElementById('menu').hidden=false">More</button>
+          <div role='menu' id='menu' hidden><div role='menuitem' id='menu-connect'
+            onclick="document.getElementById('more').textContent='Pending'">Connect</div></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
+    def test_other_person_connect_not_used_when_more_is_closer(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div class='layout'><div><h2>Test Example</h2>
+          <button id='more'>More</button></div>
+          <aside><h3>Other Person</h3>
+          <button id='wrong' onclick="this.textContent='Pending'">Connect</button></aside>
+          </div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertEqual(self.page.locator('#wrong').inner_text(), 'Connect')
+        self.assertEqual(self.db.attempts_today(), 0)
+
+    def test_message_only_panel_does_not_capture_unrelated_connect(self):
+        # A recommendation card without a heading must not inherit the
+        # verified member's identity merely because it shares a wrapper.
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div class='layout'><div><h2>Test Example</h2>
+          <button>Message</button></div><div class='recommendation'>
+          <button id='wrong' onclick="this.textContent='Pending'">Connect</button>
+          </div></div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertEqual(self.page.locator('#wrong').inner_text(), 'Connect')
+        self.assertEqual(self.db.attempts_today(), 0)
+
+    def test_multiple_direct_connect_buttons_never_guess(self):
+        doc = html("""<button>More</button>
+          <button id='first' onclick="this.textContent='Pending'">Connect</button>
+          <button id='second' onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('Multiple visible Connect', reason)
+        self.assertEqual(self.page.locator('#first').inner_text(), 'Connect')
+        self.assertEqual(self.page.locator('#second').inner_text(), 'Connect')
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_h3_heading_with_named_title_sends_only_target(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div><h3>Test Example</h3>
@@ -141,6 +212,32 @@ class BrowserMockTests(unittest.TestCase):
           </div></main></body></html>"""
         result, reason = self.run_mock(doc)
         self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
+    def test_slow_profile_intro_retries_before_skipping(self):
+        # The profile name/actions can arrive after DOMContentLoaded.
+        document = """<html><head><title>Test Example | LinkedIn</title></head>
+          <body><main><div id='intro'><h2>Loading</h2></div></main></body></html>"""
+        class DelayedPage:
+            def __init__(self, page):
+                self.p = page
+                self.ticks = 0
+            def goto(self, *args, **kwargs):
+                self.p.set_content(document)
+            def wait_for_timeout(self, ms):
+                self.ticks += 1
+                if self.ticks == 2:
+                    self.p.locator('#intro').evaluate("""el => el.innerHTML =
+                        '<h2>Test Example</h2><button id="connect" ' +
+                        'onclick="this.textContent=\\'Pending\\'">Connect</button>'""")
+            def __getattr__(self, key):
+                return MOCK_URL if key == 'url' else getattr(self.p, key)
+        delayed = DelayedPage(self.page)
+        self.db.add(MOCK_URL, 'Test Example', 'government', 25)
+        result, reason = send_one(delayed, {'url': MOCK_URL, 'name': 'Test Example'},
+                                  self.db, lambda _: None)
+        self.assertEqual(result, 'sent', reason)
+        self.assertGreaterEqual(delayed.ticks, 2)
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
 
     def test_message_button_does_not_prevent_connect(self):

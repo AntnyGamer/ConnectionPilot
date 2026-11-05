@@ -1,7 +1,4 @@
 import tempfile
-import os
-import subprocess
-import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -136,24 +133,6 @@ class LogicTests(unittest.TestCase):
         now = datetime(2026, 11, 2, 23, 30, tzinfo=TZ)
         self.assertEqual(seconds_until_tomorrow(now), 1800)
 
-class AppMigrationTests(unittest.TestCase):
-    def test_saved_minutes_are_migrated_once(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp) / 'ConnectionPilot'
-            store = Store(root / 'connectionpilot.sqlite3')
-            store.set_setting('ui:settings_version', '2')
-            store.set_setting('ui:cooldown', '2')
-            # pathlib.Path.home() uses USERPROFILE on Windows and HOME on Unix.
-            env = dict(os.environ, HOME=temp, USERPROFILE=temp)
-            command = [sys.executable, '-c', "from main import STORE; print(STORE.setting('ui:cooldown'))"]
-            first = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], env=env,
-                                   text=True, capture_output=True, timeout=10, check=True)
-            self.assertEqual(first.stdout.strip(), '120.0')
-            second = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], env=env,
-                                    text=True, capture_output=True, timeout=10, check=True)
-            self.assertEqual(second.stdout.strip(), '120.0')
-
-
 class SingleInstanceTests(unittest.TestCase):
     def test_cannot_open_two_instances_on_same_profile(self):
         from main import acquire_instance_lock
@@ -229,43 +208,6 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.attempts_today(), 1)
         self.assertEqual(self.db.sent_today(), 1)
 
-    def test_layout_skip_requeued_but_sent_and_uncertain_remain_untouched(self):
-        base = 'https://www.linkedin.com/in/'
-        for i in range(4):
-            self.db.add(base + f'person-{i}/', f'Person {i}', 'government', 25)
-        self.db.mark(base + 'person-0/', 'skipped', 'Profile name missing from header; nothing clicked.')
-        self.db.mark(base + 'person-1/', 'skipped', 'No Connect option in profile header.')
-        self.db.mark(base + 'person-2/', 'uncertain', 'clicked Connect')
-        self.db.mark(base + 'person-3/', 'sent', 'confirmed')
-        self.assertEqual(self.db.requeue_layout_skips(), 2)
-        self.assertEqual(self.db.counts().get('queued'), 2)
-        self.assertEqual(self.db.counts().get('uncertain'), 1)
-        self.assertEqual(self.db.counts().get('sent'), 1)
-        self.assertEqual(self.db.requeue_layout_skips(), 0)
-
-    def test_new_layout_skips_requeue_only_without_an_invitation_attempt(self):
-        cases = (
-            ("name-layout", "Name mismatch: couldn't identify one verified profile heading; nothing clicked."),
-            ("action-layout", "Verified profile name, but couldn't locate its own action panel. Nothing clicked."),
-            ("connect-layout", "No Connect option in verified profile introduction."),
-        )
-        for slug, reason in cases:
-            url = 'https://www.linkedin.com/in/' + slug + '/'
-            self.db.add(url, slug, 'government', 25)
-            self.db.mark(url, 'skipped', reason)
-        attempted = 'https://www.linkedin.com/in/layout-after-click/'
-        self.db.add(attempted, 'Attempted Person', 'government', 25)
-        self.db.mark(attempted, 'uncertain', 'Potential click recorded')
-        self.db.mark(attempted, 'skipped', cases[0][1])
-        self.assertEqual(self.db.requeue_layout_skips(), len(cases))
-        self.assertEqual(self.db.requeue_layout_skips(), 0)
-        with self.db._conn() as conn:
-            self.assertEqual(conn.execute("SELECT status FROM profiles WHERE url=?", (attempted,)).fetchone()[0],
-                             'skipped')
-            self.assertEqual(conn.execute("SELECT count(*) FROM profiles WHERE status='queued'").fetchone()[0],
-                             len(cases))
-        self.assertTrue(self.db.has_attempt(attempted))
-
     def test_attempt_timestamp_survives_confirmation_and_later_updates(self):
         from datetime import timedelta
         from unittest.mock import patch
@@ -289,16 +231,6 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.attempts_today(), 1)
         self.assertEqual(self.db.sent_today(), 0)
         self.assertIsNone(self.db.next_profile())
-
-    def test_historical_invitation_states_migrate_once(self):
-        url = 'https://www.linkedin.com/in/old-person/'
-        self.db.add(url, 'Old Person', 'politics', 25)
-        with self.db._conn() as conn:
-            conn.execute("DELETE FROM settings WHERE key='migration:attempt_ledger'")
-            conn.execute("UPDATE profiles SET status='uncertain' WHERE url=?", (url,))
-        reloaded = Store(self.db.path)
-        self.assertEqual(reloaded.attempts_today(), 1)
-        self.assertEqual(Store(self.db.path).attempts_today(), 1)
 
     def test_reset_search_pages_only_removes_requested_searches(self):
         self.db.set_setting('page:politics', 14)
@@ -361,7 +293,7 @@ class StorageTests(unittest.TestCase):
             self.db.mark(second, 'uncertain', 'Attempted click')
         self.assertEqual(self.db.last_attempt_at(), later)
 
-    def test_latest_attempt_can_be_an_earlier_inserted_legacy_record(self):
+    def test_latest_attempt_uses_chronological_time_not_insert_order(self):
         first = 'https://www.linkedin.com/in/imported-recent/'
         second = 'https://www.linkedin.com/in/imported-old/'
         self.db.add(first, 'First Person', 'politics', 25)

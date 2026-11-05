@@ -140,7 +140,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
         notify(f"Looking at page {page_no} for: {search}")
         page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(1700)
+        # Wait for actual search results below instead of spending 1.7 seconds
+        # on every page even when the cards are already available.
         check_protection(page)
         if "/login" in page.url.lower() or "/authwall" in page.url.lower():
             raise StopRun("LinkedIn has logged you out; sign in and restart.")
@@ -284,9 +285,11 @@ def _profile_intro(page, expected_name):
         return None, "Name mismatch: couldn't identify one verified profile heading; nothing clicked."
     name_heading = matching[0]
 
-    # Choose the *smallest* named introduction containing the person's own
-    # action controls. Never search the entire page for Connect buttons.
+    # Search outward from the verified name for the nearest *direct* Connect
+    # control. A More-only inner wrapper is not the whole action panel: newer
+    # layouts can put the visible Connect button in a sibling wrapper.
     current = name_heading.locator('xpath=..')
+    fallback = None
     for _ in range(12):
         if not current.count():
             break
@@ -294,18 +297,38 @@ def _profile_intro(page, expected_name):
             break
         actions = current.get_by_role("button", name=re.compile(
             r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I))
-        if actions.count():
-            # A broad layout wrapper may include suggestions for OTHER people.
-            # Do not use its Connect button as the verified person's control.
-            # Failing closed here is safer than inviting the wrong recipient.
+        if any(action.is_visible() for action in actions.all()):
+            # Never widen the panel into a sidebar or another person's card.
+            # If there was a verified smaller panel, its More action is still
+            # a safe fallback; an unrelated Connect action is not.
             headings = current.locator('h1, h2, h3, [role="heading"]').all()[:50]
             if any(h.is_visible() and not names_match(expected_name, h.inner_text(timeout=2000).strip())
                    for h in headings):
-                return None, "Action panel also contains other headings; nothing clicked."
+                return (fallback, None) if fallback is not None else (
+                    None, "Action panel also contains other headings; nothing clicked.")
             if current.locator("aside").count():
-                return None, "Action panel contains a sidebar; nothing clicked."
-            return current, None
+                return (fallback, None) if fallback is not None else (
+                    None, "Action panel contains a sidebar; nothing clicked.")
+
+            connects = current.get_by_role("button", name=re.compile(
+                r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I))
+            direct = [button for button in connects.all() if button.is_visible()]
+            if len(direct) > 1:
+                return None, "Multiple visible Connect controls; nothing clicked."
+            if len(direct) == 1:
+                return current, None
+            # Pending/connected is definitive; do not widen to another Connect.
+            if find_first_action(current, "Pending") or find_first_action(current, "Remove connection"):
+                return current, None
+            if fallback is None:
+                fallback = current
+            # Widen only for a verified More panel. A Message-only panel
+            # could sit beside another person's recommendation card.
+            if not find_first_action(current, "More") and not find_first_action(fallback, "More"):
+                return current, None
         current = current.locator('xpath=..')
+    if fallback is not None:
+        return fallback, None
     return None, "Verified profile name, but couldn't locate its own action panel. Nothing clicked."
 
 
@@ -357,7 +380,8 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(1250)
+    # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
+    # verified introduction, retry the safe inspection without clicking.
     check_protection(page)
     if "/login" in page.url.lower() or "/authwall" in page.url.lower():
         raise StopRun("Please sign in again in the browser before restarting.")
@@ -367,6 +391,15 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     if normalize_profile(page.url) != url:
         return "skipped", "Opened URL does not match the discovered profile; nothing clicked."
     header, error = _profile_intro(page, profile["name"])
+    if header is None and not error.startswith("Name mismatch: page title"):
+        for _ in range(5):
+            page.wait_for_timeout(400)
+            check_protection(page)
+            if normalize_profile(page.url) != url:
+                return "skipped", "Profile navigated during introduction loading; nothing clicked."
+            header, error = _profile_intro(page, profile["name"])
+            if header is not None:
+                break
     if header is None:
         return "skipped", error
     # Check relationship before applying interest filters. Existing

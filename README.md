@@ -39,7 +39,7 @@ Keywords separated by commas represent alternatives (OR) within one field; activ
 - Sign-in happens in a separate local Chrome/Edge profile if you select the Google option. ConnectionPilot never asks for your Google password.
 - It checks that each opened profile URL and visible identity match the discovered candidate before attempting an invitation. Redirects and ambiguous identities are skipped.
 - If a click may have sent an invitation but the site does not confirm, the candidate is marked **Unconfirmed**; it is not retried automatically. Uncertain attempts count toward your goal, daily cap and cooldown.
-- Unconfirmed attempts are automatically set aside and the campaign continues to another person without sending a duplicate. A separate, persistent invitation-attempt record preserves the original attempt time even when a profile's status changes. Existing databases are migrated automatically, using the prior status timestamp as the best available history.
+- Unconfirmed attempts are automatically set aside and the campaign continues to another person without sending a duplicate. A separate, persistent invitation-attempt record preserves the original attempt time even when a profile's status changes. The application does not convert obsolete database formats.
 - The application prevents a second copy from starting against the same data folder, so two sessions cannot select and invite the same candidate simultaneously.
 - Pressing **Pause** before a sending action begins prevents that action. A second pause/stop check prevents the final confirmation click if a dialog is open; the candidate stays under **Unconfirmed**. An action that was already clicked may still finish. Stop/pause does not override LinkedIn's restrictions.
 - It halts on recognized verification, invitation-limit or restriction screens; it does not solve challenges. Normal invitation confirmation modals are handled automatically when their controls are unambiguous; unsupported relationship or email verification is skipped without asking you to click. This does not guarantee unattended operation if LinkedIn logs you out or presents a mandatory challenge.
@@ -47,7 +47,7 @@ Keywords separated by commas represent alternatives (OR) within one field; activ
 - The sending window, daily cap and cooldown are checked again just before the sending action, so slow page loads cannot bypass them.
 - Invitations and local statuses are saved in `%USERPROFILE%\ConnectionPilot\connectionpilot.sqlite3`. Browser session profiles are inside `%USERPROFILE%\ConnectionPilot`. **Do not share the session files**.
 
-**Upgrading an existing installation:** Replace the extracted program code, not the `%USERPROFILE%\ConnectionPilot` data folder. Existing settings, Google login and saved candidate states should persist. Internal migration keys are retained to prevent resetting previous progress, even though the displayed version is always v1.
+**Data format:** The application uses its current SQLite schema directly. It does not run migration code for previous ConnectionPilot versions. Keep your local data folder if you want to retain existing settings and invitation records; unsupported older database formats are not automatically converted.
 
 ## Local checks
 
