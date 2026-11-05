@@ -792,6 +792,16 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.counts().get("queued", 0), 0)
         self.assertIsNone(self.db.setting("page:policy"))
 
+    def test_h4_and_h6_restriction_headings_stop_before_click(self):
+        for tag in ("h4", "h6"):
+            with self.subTest(tag=tag):
+                doc = html(f"""<{tag}>Your account has been temporarily restricted</{tag}>
+                    <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+                with self.assertRaises(ProtectionScreen):
+                    self.run_mock(doc)
+                self.assertEqual(self.db.total_attempts(), 0)
+                self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
     def test_late_h3_restriction_heading_stops_even_after_many_headings(self):
         earlier = "".join(f"<h3>Other member section {i}</h3>" for i in range(40))
         doc = html(earlier + """<h3>Your account has been temporarily restricted</h3>
@@ -830,6 +840,42 @@ class BrowserMockTests(unittest.TestCase):
             <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
         result, reason = self.run_mock(doc)
         self.assertEqual(result, 'sent', reason)
+
+    def test_readable_new_profile_does_not_hide_other_unnamed_new_profile(self):
+        first = """<html><body><main>
+            <div><a href='/in/known-new/'>Known New</a>
+                <p>Policy analyst in government</p></div>
+            <div><a href='/in/unnamed-new/'>View profile</a></div>
+            </main></body></html>"""
+        second = """<html><body><main>
+            <div><a href='/in/known-new/'>Known New</a>
+                <p>Policy analyst in government</p></div>
+            <div><a href='/in/unnamed-new/'>Unnamed New</a>
+                <p>Policy analyst in government</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.document = first
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(self.document)
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+        page = SearchPage(self.page)
+        added = collect_results(page, self.db, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 100)
+        self.assertEqual(added, 1)
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+        self.assertEqual(self.db.counts().get('queued'), 1)
+        # When the missing name becomes readable, dedupe the first candidate
+        # and advance after collecting the second one.
+        page.document = second
+        added = collect_results(page, self.db, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 100)
+        self.assertEqual(added, 1)
+        self.assertEqual(self.db.counts().get('queued'), 2)
+        self.assertEqual(self.db.setting('page:policy'), '2')
 
     def test_processed_generic_link_does_not_mask_new_unnamed_member(self):
         known = 'https://www.linkedin.com/in/known-member/'
