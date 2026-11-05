@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from storage import Store
-from automation import ProtectionScreen, StopRun, collect_results, send_one
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, send_one
 
 try:
     from playwright.sync_api import sync_playwright
@@ -834,6 +834,33 @@ class BrowserMockTests(unittest.TestCase):
             self.run_mock(doc)
         self.assertEqual(self.db.total_attempts(), 0)
         self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
+    def test_pasted_warning_in_comment_modal_does_not_count_as_site_warning(self):
+        # Reading somebody's comment in a dialog must not be misread as a
+        # restriction on the viewer's own account.
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1></section>
+          <div role="dialog"><h2>Comments</h2><article>
+            <p>Your account has been temporarily restricted</p>
+          </article></div></main></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        check_protection(LocalPage(self.page))
+
+    def test_genuine_site_dialog_still_detects_explicit_restriction(self):
+        doc = """<html><body><main><h1>Test Example</h1></main>
+          <div role="dialog"><h2>Your account is temporarily restricted</h2>
+            <p>Review your account to restore access.</p></div></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        with self.assertRaises(ProtectionScreen):
+            check_protection(LocalPage(self.page))
 
     def test_pasted_standalone_warning_in_short_member_main_is_not_a_block(self):
         doc = """<html><body><main>
