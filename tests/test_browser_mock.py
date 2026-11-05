@@ -629,6 +629,66 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIsNone(self.db.next_profile())
         self.assertEqual(self.db.setting('page:government'), '2')
 
+    def test_long_restriction_page_stops_before_click(self):
+        # The exact banner LinkedIn displayed can be surrounded by long
+        # explanations that bypass the previous short-text heuristic.
+        long_text = 'LinkedIn asks users to review extensions. ' * 30
+        doc = html("""<h2>Your account has been temporarily restricted</h2>
+            <p>""" + long_text + """</p>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator("button#connect").inner_text(), "Connect")
+
+    def test_hidden_restriction_heading_does_not_halt(self):
+        doc = html("""<h2 hidden>Your account has been temporarily restricted</h2>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+
+    def test_processed_search_members_are_not_reinspected(self):
+        known = 'https://www.linkedin.com/in/processed-person/'
+        self.db.add(known, 'Processed Person', 'government policy', 50)
+        self.db.mark(known, 'skipped', 'Already connected')
+        doc = """<html><body><main>
+            <div><a id='known' href='/in/processed-person/'>Processed Person</a>
+                 <p>Government public policy analyst in NJ</p></div>
+            <div><a id='new' href='/in/new-person/'>New Person</a>
+                 <p>Government public policy analyst in NJ</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        result = collect_results(SearchPage(self.page), self.db, ['government'],
+                                 ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(result, 1)
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/new-person/')
+        self.assertEqual(self.db.counts().get('skipped'), 1)
+        self.assertEqual(self.db.setting('page:government'), '2')
+
+    def test_explicit_third_degree_card_is_filtered_for_second_only(self):
+        doc = """<html><body><main>
+            <div><a href='/in/third-person/'>Third Person</a>
+                 <p>3rd degree connection · Public policy analyst in New Jersey</p></div>
+            <div><a href='/in/unknown-person/'>Unknown Person</a>
+                 <p>Public policy analyst in New Jersey; degree not shown</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        count = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200,
+                                {'degree': '2nd only', 'min_score': 25})
+        self.assertEqual(count, 1)
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/unknown-person/')
+
     def test_visible_restriction_alert_still_halts_before_click(self):
         doc = html("""<div role="alert">You've reached the invitation limit</div>
           <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
