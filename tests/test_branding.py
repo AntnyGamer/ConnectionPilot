@@ -66,6 +66,44 @@ class BrandingTests(unittest.TestCase):
         self.assertEqual(app.events.qsize(), 0)
         app.root.after.assert_called_with(250, app.pump)
 
+    def test_ui_refresh_requests_share_one_database_redraw(self):
+        import queue
+        from unittest.mock import MagicMock
+        app = main.App.__new__(main.App)
+        app.events = queue.Queue()
+        app.root = MagicMock()
+        app.refresh = MagicMock()
+        app.status = MagicMock()
+        app.put_log = MagicMock()
+        for _ in range(12):
+            app.events.put(("refresh", ""))
+        app.pump()
+        app.refresh.assert_called_once()
+        app.root.after.assert_called_with(250, app.pump)
+
+    def test_done_and_refresh_in_one_batch_update_counters_once(self):
+        import queue
+        from unittest.mock import MagicMock
+        app = main.App.__new__(main.App)
+        app.events = queue.Queue()
+        app.root = MagicMock()
+        app.refresh = MagicMock()
+        app.pause_event = MagicMock()
+        app.start_btn = MagicMock()
+        app.signin_btn = MagicMock()
+        app.retry_btn = MagicMock()
+        app.reset_btn = MagicMock()
+        app.pause_btn = MagicMock()
+        app.stop_btn = MagicMock()
+        app.running = True
+        app.events.put(("refresh", ""))
+        app.events.put(("done", ""))
+        app.pump()
+        app.refresh.assert_called_once()
+        self.assertFalse(app.running)
+        app.start_btn.configure.assert_called_once_with(state="normal")
+        app.pause_event.clear.assert_called_once()
+
     def test_assets_present(self):
         for name in ('connectionpilot.png', 'connectionpilot-header.png',
                      'connectionpilot.ico', 'social-preview.png'):
