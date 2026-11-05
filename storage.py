@@ -163,6 +163,7 @@ class Store:
         """Read dashboard counters together from one consistent SQLite snapshot."""
         start, end = self._today_bounds()
         with self._conn() as db:
+            db.execute("BEGIN")  # Keep all counters in one read transaction.
             rows = db.execute("SELECT status, count(*) FROM profiles GROUP BY status").fetchall()
             counts = {row[0]: row[1] for row in rows}
             total = db.execute("SELECT count(*) FROM attempts").fetchone()[0]
