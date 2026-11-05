@@ -36,14 +36,6 @@ class Store:
                     event TEXT NOT NULL, detail TEXT NOT NULL
                 );
             """)
-            # Earlier releases only stored a profile's latest status time.
-            # Preserve that best-available history once, then never change
-            # the timestamp of an invitation attempt when its status changes.
-            if db.execute("SELECT 1 FROM settings WHERE key='migration:attempt_ledger'").fetchone() is None:
-                db.execute("""INSERT OR IGNORE INTO attempts(url, initiated_at, result)
-                    SELECT url, updated_at, status FROM profiles
-                    WHERE status IN ('sent','uncertain')""")
-                db.execute("INSERT INTO settings(key,value) VALUES ('migration:attempt_ledger','1')")
         # The browser profile and database remain on this machine, outside the code repository.
         if self.path.exists() and __import__("os").name == "posix":
             self.path.chmod(0o600)
@@ -123,23 +115,6 @@ class Store:
                   AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
                 (self._now(),))
 
-    def requeue_layout_skips(self):
-        """Retry only pre-click layout failures after updating detection, not invites."""
-        with self._conn() as db:
-            cur = db.execute("""UPDATE profiles SET status='queued', reason='', updated_at=?
-                WHERE status='skipped'
-                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)
-                  AND (
-                    reason LIKE 'Profile name missing from header; nothing clicked.%'
-                    OR reason LIKE 'Could not identify LinkedIn profile header; nothing clicked.%'
-                    OR reason LIKE 'No Connect option in profile header.%'
-                    OR reason LIKE 'Name mismatch: couldn''t identify one verified profile heading; nothing clicked.%'
-                    OR reason LIKE 'Verified profile name, but couldn''t locate its own action panel.%'
-                    OR reason LIKE 'No Connect option in verified profile introduction.%'
-                    OR reason LIKE 'No unambiguous Connect menu action.%'
-                  )""", (self._now(),))
-            return cur.rowcount
-
     def setting(self, key, default=None):
         with self._conn() as db:
             row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -193,7 +168,7 @@ class Store:
                 (start, end)).fetchone()[0]
 
     def last_attempt_at(self):
-        """Select the latest instant, including across DST and legacy imports.
+        """Select the latest instant, including across DST.
 
         MAX on an offset-aware local timestamp's text is not chronological.
         SQLite's julianday converts the offset to a comparable UTC instant.
