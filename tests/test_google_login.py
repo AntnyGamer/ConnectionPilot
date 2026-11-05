@@ -56,6 +56,31 @@ class GoogleLoginTests(unittest.TestCase):
             self.assertTrue(path.endswith('google-login-msedge'))
             self.assertEqual(opts['channel'], 'msedge')
 
+    def test_posix_close_terminates_owned_process(self):
+        process = MagicMock()
+        process.poll.return_value = None
+        with patch("google_login.sys.platform", "linux"):
+            close_google_signin(process)
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=2)
+        process.kill.assert_not_called()
+
+    def test_cancel_exit_does_not_close_browser_or_stop_worker(self):
+        app = main.App.__new__(main.App)
+        app.root = MagicMock()
+        app.signin_process = MagicMock()
+        app.worker = MagicMock()
+        app.running = True
+        app.closing = False
+        app.stop_event = MagicMock()
+        with patch("main.messagebox.askyesno", return_value=False), \
+             patch("main.close_google_signin") as cleanup:
+            app.close()
+        app.stop_event.set.assert_not_called()
+        cleanup.assert_not_called()
+        app.root.destroy.assert_not_called()
+        self.assertFalse(app.closing)
+
     def test_windows_close_ends_only_the_owned_signin_process_tree(self):
         process = MagicMock()
         process.pid = 1457
@@ -97,13 +122,14 @@ class GoogleLoginTests(unittest.TestCase):
     def test_app_close_releases_owned_login_process_before_destroy(self):
         app = main.App.__new__(main.App)
         app.root = MagicMock()
-        app.signin_process = MagicMock()
+        owned = MagicMock()
+        app.signin_process = owned
         app.running = False
         app.closing = False
         app.worker = None
         with patch("main.close_google_signin") as cleanup:
             app.close()
-        cleanup.assert_called_once()
+        cleanup.assert_called_once_with(owned)
         app.root.destroy.assert_called_once()
         self.assertIsNone(app.signin_process)
         self.assertTrue(app.closing)
