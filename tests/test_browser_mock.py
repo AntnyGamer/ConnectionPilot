@@ -468,6 +468,30 @@ class BrowserMockTests(unittest.TestCase):
         result, _ = self.run_mock(doc)
         self.assertEqual(result, 'sent')
 
+    def test_immediate_pending_does_not_wait_fixed_900ms(self):
+        # When the request is confirmed immediately, no extra delay is needed.
+        doc = html("""<button id='connect'
+            onclick="this.textContent='Pending'">Connect</button>""")
+        class TrackingPage:
+            url = MOCK_URL
+            def __init__(self, page):
+                self.page = page
+                self.waits = []
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+            def wait_for_timeout(self, ms):
+                self.waits.append(ms)
+                self.page.wait_for_timeout(min(ms, 30))
+            def __getattr__(self, key):
+                return getattr(self.page, key)
+        target = TrackingPage(self.page)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        result, reason = send_one(
+            target, {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None)
+        self.assertEqual(result, 'sent', reason)
+        self.assertNotIn(900, target.waits)
+
     def test_generic_send_in_invitation_dialog_is_clicked_automatically(self):
         doc = html('''''''''<button id="c" onclick="document.querySelector('#d').hidden=false">Connect</button>''''''''' , '''''''''<div role="dialog" id="d" hidden><p>Send your invitation to connect</p>
           <button id="final" onclick="document.querySelector('#c').textContent='Pending';document.querySelector('#d').hidden=true">Send</button></div>''''''''' )
