@@ -36,6 +36,18 @@ Search phrases and relevant profile terms are **empty on a first installation**.
 
 Keywords separated by commas represent alternatives (OR) within one field; active fields must all match (AND). Matching uses visible profile text, not validated LinkedIn metadata. A search may miss qualified people or include irrelevant ones. LinkedIn's built-in filters may be more accurate. The program will not invent acquaintances or emails to bypass relationship verification.
 
+### Automated page-access safeguard
+
+Because rejected and filtered candidates still require page visits, the app now
+stops after 20 attempted automated LinkedIn top-level page navigations in a
+calendar day (including feed, search and profile loads), and after three
+consecutive name/layout-action failures. The page counter persists across app
+restarts and **Clear campaign data**. This is an intentional brake, **not**
+a LinkedIn-approved quota or a guarantee against restriction. Automated
+profile viewing and invitation tools remain prohibited by LinkedIn;
+the reliable way to avoid future automation restrictions is to stop using
+them and interact manually or through a specifically authorized integration.
+
 ## Safety and data integrity
 
 - Sign-in happens in a separate local Chrome/Edge profile if you select the Google option. ConnectionPilot never asks for your Google password.
