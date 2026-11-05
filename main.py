@@ -14,7 +14,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from automation import ProtectionScreen, StopRun, run_campaign
-from google_login import open_google_signin
+from google_login import close_google_signin, open_google_signin
 from logic import (FILTER_FIELDS,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
                    valid_cooldown_seconds, safe_saved_int)
@@ -25,7 +25,7 @@ APP_DIR = Path.home() / "ConnectionPilot"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 restrict_posix_data(APP_DIR)
 STORE = Store(APP_DIR / "connectionpilot.sqlite3")
-APP_VERSION = "v1.0.6"
+APP_VERSION = "v1.0.5"
 
 
 def asset_path(name: str) -> Path:
@@ -84,6 +84,7 @@ class App:
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
         self.worker = None
+        self.signin_process = None
         self.running = False
         self.closing = False
 
@@ -408,8 +409,13 @@ class App:
         if self.running:
             messagebox.showinfo("Stop first", "Stop the campaign before signing in again.")
             return
+        if self.signin_process is not None and self.signin_process.poll() is None:
+            messagebox.showinfo("Sign-in browser already open",
+                                "Complete sign-in in the browser window you already opened, "
+                                "then close that window before starting the campaign.")
+            return
         try:
-            channel = open_google_signin(APP_DIR)
+            channel, self.signin_process = open_google_signin(APP_DIR)
         except (OSError, ValueError) as exc:
             messagebox.showerror("Cannot open browser", str(exc))
             return
@@ -512,10 +518,11 @@ class App:
     def close(self):
         if self.closing:
             return
+        if self.running and not messagebox.askyesno(
+                "Exit program?", "Stop the running campaign and close the application?"):
+            return
+        self.closing = True
         if self.running:
-            if not messagebox.askyesno("Exit program?", "Stop the running campaign and close the application?"):
-                return
-            self.closing = True
             self.stop_event.set()
             self.pause_event.clear()
             self.status.set("Closing the automation browser and saving progress…")
@@ -524,12 +531,18 @@ class App:
             self.stop_btn.configure(state="disabled")
             self.root.after(300, self.finish_close)
         else:
-            self.root.destroy()
+            self.finish_close()
 
     def finish_close(self):
+        # Do not tear down Python while the worker is still closing the
+        # Playwright browser and committing its final SQLite records.
         if self.worker and self.worker.is_alive():
             self.root.after(300, self.finish_close)
-        else:
+            return
+        try:
+            close_google_signin(self.signin_process)
+        finally:
+            self.signin_process = None
             self.root.destroy()
 
 def acquire_instance_lock(path):
