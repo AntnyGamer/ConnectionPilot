@@ -26,7 +26,7 @@ STOP_PHRASES = [
     "invitation limit reached", "temporarily restricted", "your account has been restricted",
     "account restricted", "unusual activity", "security verification",
     "verify it's you", "verify it’s you", "captcha", "security challenge",
-    "your account has been temporarily restricted", "too many invitations",
+    "too many invitations",
 ]
 
 
