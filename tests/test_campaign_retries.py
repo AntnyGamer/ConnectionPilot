@@ -77,6 +77,7 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.assertNotIn('--no-sandbox', settings.kwargs.get('args', []))
 
     def test_invalid_search_page_restarts_at_first_page(self):
+        self.page.url = 'https://www.linkedin.com/search/results/people/'
         self.page.wait_for_timeout = MagicMock()
         anchors = MagicMock()
         anchors.count.return_value = 0
