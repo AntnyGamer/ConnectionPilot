@@ -252,6 +252,21 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.setting('ui:daily'), '100')
         self.assertEqual(self.db.setting('ui:browser_channel'), 'chrome')
 
+    def test_automated_page_guardrail_is_persistent_and_not_reset_with_campaign(self):
+        # Page views include failures/skips and consume budget before loading.
+        when = datetime(2026, 11, 5, 10, tzinfo=TZ)
+        tomorrow = datetime(2026, 11, 6, 10, tzinfo=TZ)
+        self.assertEqual(self.db.automated_pages_today(when), 0)
+        self.assertTrue(self.db.reserve_automated_page(2, when))
+        self.assertTrue(self.db.reserve_automated_page(2, when))
+        self.assertFalse(self.db.reserve_automated_page(2, when))
+        self.assertEqual(self.db.automated_pages_today(when), 2)
+        self.db.clear_campaign_data()
+        self.assertFalse(self.db.reserve_automated_page(2, when))
+        self.assertEqual(self.db.automated_pages_today(when), 2)
+        self.assertEqual(self.db.automated_pages_today(tomorrow), 0)
+        self.assertTrue(self.db.reserve_automated_page(2, tomorrow))
+
     def test_dashboard_snapshot_matches_individual_counters(self):
         a = 'https://www.linkedin.com/in/dashboard-a/'
         b = 'https://www.linkedin.com/in/dashboard-b/'
