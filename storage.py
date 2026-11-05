@@ -141,6 +141,7 @@ class Store:
                     OR reason LIKE 'No unambiguous Connect menu action.%'
                     OR reason LIKE 'Connect action is unavailable;%'
                     OR reason LIKE 'Multiple visible Connect controls;%'
+                    OR reason LIKE 'Profile inspection failed before any click; no automatic reinspection:%'
                   )""", (self._now(),))
             return cur.rowcount
 
