@@ -216,11 +216,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 if url in seen_this_page:
                     continue
                 if url in processed:
-                    # This was a named person on an earlier search. Their
-                    # existing terminal status is intentionally preserved.
-                    # Count the page as understood so discovery can advance.
+                    # Skip a finished profile without re-reading their card.
+                    # Do not count them as evidence that every *new* profile
+                    # on this page has a readable member name.
                     seen_this_page.add(url)
-                    named_profile_links.add(url)
                     continue
                 name = search_result_name(anchor.inner_text(timeout=1200) or "")
                 if not name:
@@ -274,10 +273,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         if extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
-        elif named_profile_links:
-            # A page with only non-matching candidates must still advance.
-            # Count member names BEFORE applying filters, so filtered-out
-            # profiles cannot trap discovery on the same search page.
+        elif named_profile_links or (valid_profile_links and valid_profile_links.issubset(processed)):
+            # Advance when we identified at least one new member by name, or
+            # when every valid profile link was already processed. Do not let
+            # a completed person's generic link conceal an unread new person.
             store.set_setting(key, page_no + 1)
         elif valid_profile_links:
             notify(f"Profile URLs appeared for '{search}', but no member names could be read; "
