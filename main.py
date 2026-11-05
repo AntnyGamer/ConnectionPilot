@@ -307,11 +307,11 @@ class App:
         self.log_widget.configure(state="disabled")
 
     def refresh(self):
-        counts = STORE.counts()
-        self.stats.set(f"Attempts: {STORE.total_attempts()}    Sent: {counts.get('sent', 0)}    "
+        counts, total, confirmed, possible = STORE.dashboard_stats()
+        self.stats.set(f"Attempts: {total}    Sent: {counts.get('sent', 0)}    "
                        f"Queued: {counts.get('queued', 0)}    Filtered: {counts.get('filtered', 0)}    "
                        f"Skipped: {counts.get('skipped', 0)}    Unconfirmed: {counts.get('uncertain', 0)}    "
-                       f"Today: {STORE.sent_today()} confirmed / {STORE.attempts_today()} possible")
+                       f"Today: {confirmed} confirmed / {possible} possible")
 
     def emit(self, kind, data=""):
         self.events.put((kind, data))
