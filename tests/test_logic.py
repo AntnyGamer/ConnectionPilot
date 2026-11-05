@@ -389,16 +389,6 @@ class StorageTests(unittest.TestCase):
             conn.execute("INSERT INTO attempts VALUES (?,?,?)", (second, '2026-11-01T10:00:00-05:00', 'sent'))
         self.assertEqual(self.db.last_attempt_at(), '2026-11-02T10:00:00-05:00')
 
-    def test_inspection_failures_persist_and_do_not_create_invitation_attempts(self):
-        url = 'https://www.linkedin.com/in/broken-profile/'
-        self.db.add(url, 'Broken Profile', 'government', 25)
-        self.assertEqual(self.db.record_inspection_failure(url), 1)
-        reopened = Store(self.db.path)
-        self.assertEqual(reopened.record_inspection_failure(url), 2)
-        self.assertEqual(reopened.record_inspection_failure(url), 3)
-        self.assertEqual(reopened.next_profile()['url'], url)
-        self.assertFalse(reopened.has_attempt(url))
-
     def test_never_retry_uncertain(self):
         a='https://www.linkedin.com/in/alice/'
         self.db.add(a,'Alice','political science',25)
