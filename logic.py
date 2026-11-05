@@ -10,25 +10,6 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/New_York")
 
-DEFAULT_SEARCHES = [
-    "political science Rowan University",
-    "government affairs New Jersey",
-    "political campaign staff New Jersey",
-    "public policy New Jersey",
-    "state government New Jersey",
-    "international relations Washington DC",
-    "legislative aide New Jersey",
-    "political science Philadelphia",
-]
-
-# This list is purposefully editable in the app, not claimed to be a guarantee of relevance.
-DEFAULT_MATCH_TERMS = [
-    "politic", "government", "legislativ", "public policy", "public affairs",
-    "diplomac", "international relations", "campaign", "congress", "civic",
-    "rowan", "senat", "assembly", "public service", "council",
-    "state department", "advocacy", "policy analyst", "staffer",
-]
-
 STOP_PHRASES = [
     "you've reached the invitation limit", "you’ve reached the invitation limit",
     "you've reached the weekly invitation limit", "you’ve reached the weekly invitation limit",
