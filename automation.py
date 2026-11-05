@@ -458,7 +458,7 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             # The menu can render asynchronously; do not mislabel a slow
             # Connect entry as ambiguous because a fixed delay elapsed.
             # Only accept an explicitly labeled menu item once visible.
-            menu_action = re.compile(r"^(?:Connect|Invite .* to connect)$", re.I)
+            menu_action = re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I)
             # Some LinkedIn menus expose their option as a button rather than
             # an ARIA menuitem. Only include buttons inside a real menu.
             menu = page.get_by_role("menu")
