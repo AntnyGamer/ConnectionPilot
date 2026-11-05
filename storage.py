@@ -110,8 +110,15 @@ class Store:
             # happens. Later confirmations or skips update the result without
             # changing the immutable initiation timestamp.
             if status in ("uncertain", "sent"):
-                db.execute("INSERT OR IGNORE INTO attempts(url, initiated_at, result) VALUES (?,?,?)",
-                           (url, now, status))
+                inserted = db.execute(
+                    "INSERT OR IGNORE INTO attempts(url, initiated_at, result) VALUES (?,?,?)",
+                    (url, now, status))
+                if inserted.rowcount:
+                    # The initial INSERT already recorded the correct result.
+                    # Do not UPDATE the new row to the same value again.
+                    return
+            # This still updates existing attempts after confirmation or
+            # a later skipped/filtered state, preserving the original timestamp.
             db.execute("UPDATE attempts SET result=? WHERE url=?", (status, url))
 
     def reset_search_pages(self, searches):
