@@ -744,6 +744,21 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.counts().get("queued", 0), 0)
         self.assertIsNone(self.db.setting("page:policy"))
 
+    def test_late_h3_restriction_heading_stops_even_after_many_headings(self):
+        earlier = "".join(f"<h3>Other member section {i}</h3>" for i in range(40))
+        doc = html(earlier + """<h3>Your account has been temporarily restricted</h3>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
+    def test_unrelated_heading_about_restrictions_is_not_a_block(self):
+        doc = html("""<h3>Research into temporarily restricted online accounts</h3>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, "sent", reason)
+
     def test_long_restriction_page_stops_before_click(self):
         # The exact banner LinkedIn displayed can be surrounded by long
         # explanations that bypass the previous short-text heuristic.
