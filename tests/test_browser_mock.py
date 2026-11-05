@@ -136,6 +136,39 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIsNone(self.page.locator('#menu-connect').get_attribute('data-clicked'))
         self.assertEqual(self.db.attempts_today(), 0)
 
+    def test_more_menu_connect_button_without_menuitem_role(self):
+        doc = html("""<button id='more' onclick="document.querySelector('#menu').hidden=false">More</button>
+            <div role='menu' id='menu' hidden><button id='menu-connect'
+            onclick="document.getElementById('more').textContent='Pending'">Connect</button></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
+    def test_delayed_more_menu_button_without_menuitem_role(self):
+        doc = html("""<button id='more' onclick="setTimeout(() =>
+            document.getElementById('menu').hidden=false, 240)">More</button>
+            <div role='menu' id='menu' hidden><button id='menu-connect'
+            onclick="document.getElementById('more').textContent='Pending'">Connect</button></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
+    def test_disabled_direct_connect_does_not_consume_an_attempt(self):
+        doc = html("""<button id='disabled' disabled
+            onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('unavailable', reason)
+        self.assertEqual(self.db.attempts_today(), 0)
+        self.assertEqual(self.page.locator('#disabled').inner_text(), 'Connect')
+
+    def test_disabled_menu_connect_does_not_consume_an_attempt(self):
+        doc = html("""<button id='more' onclick="document.getElementById('menu').hidden=false">More</button>
+            <div role='menu' id='menu' hidden><button id='disabled' disabled>Connect</button></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_other_person_connect_not_used_when_more_is_closer(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div class='layout'><div><h2>Test Example</h2>
