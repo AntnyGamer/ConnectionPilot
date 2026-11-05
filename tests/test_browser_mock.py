@@ -792,6 +792,26 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.counts().get("queued", 0), 0)
         self.assertIsNone(self.db.setting("page:policy"))
 
+    def test_documented_restriction_titles_halt_before_invitation(self):
+        # These are documented visible variants, not claims about LinkedIn's
+        # current production HTML heading tags.
+        titles = (
+            "Your account is temporarily restricted",
+            "Access to your account has been temporarily restricted",
+            "We've Restricted Your Account Temporarily",
+            "Your account has been temporarily restricted as a precaution",
+            "Your account has been permanently restricted",
+        )
+        for index, title in enumerate(titles):
+            with self.subTest(title=title):
+                heading = ("h1", "h2", "h4", "h5", "h6")[index]
+                doc = html(f"<{heading}>{title}</{heading}>"
+                           "<button id='connect' onclick=\"this.textContent='Pending'\">Connect</button>")
+                with self.assertRaises(ProtectionScreen):
+                    self.run_mock(doc)
+                self.assertEqual(self.db.total_attempts(), 0)
+                self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
     def test_h4_and_h6_restriction_headings_stop_before_click(self):
         for tag in ("h4", "h6"):
             with self.subTest(tag=tag):
