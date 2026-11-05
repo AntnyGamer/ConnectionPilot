@@ -180,6 +180,37 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.setting('term'), 'New Jersey')
         self.db.log('example','OK')
         self.assertEqual(self.db.history()[0][1], 'example')
+    def test_initial_attempt_insert_does_not_do_redundant_update(self):
+        url = "https://www.linkedin.com/in/write-once/"
+        self.db.add(url, "Write Once", "government", 25)
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE attempt_changes(result TEXT)")
+            conn.execute("""CREATE TRIGGER capture_attempt_update AFTER UPDATE
+                ON attempts BEGIN
+                    INSERT INTO attempt_changes(result) VALUES(NEW.result);
+                END""")
+        self.db.mark(url, "uncertain", "Attempt initiated")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM attempt_changes").fetchone()[0], 0)
+            first_time = conn.execute(
+                "SELECT initiated_at FROM attempts WHERE url=?", (url,)).fetchone()[0]
+        self.db.mark(url, "sent", "Confirmed")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT result FROM attempt_changes").fetchone()[0], "sent")
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM attempt_changes").fetchone()[0], 1)
+            row = conn.execute(
+                "SELECT initiated_at, result FROM attempts WHERE url=?", (url,)).fetchone()
+            self.assertEqual(tuple(row), (first_time, "sent"))
+        self.db.mark(url, "skipped", "Later state change")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT result FROM attempt_changes ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()[0], "skipped")
+        self.assertEqual(self.db.total_attempts(), 1)
+
     def test_identical_setting_save_does_not_write_a_second_time(self):
         with self.db._conn() as conn:
             conn.execute("CREATE TABLE setting_writes(value TEXT)")
