@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from storage import Store
-from automation import ProtectionScreen, collect_results, send_one
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, send_one
 
 try:
     from playwright.sync_api import sync_playwright
@@ -398,6 +398,7 @@ class BrowserMockTests(unittest.TestCase):
         doc = '<html><body><main>' + '''<div><a href='/in/legislator-1/'>Legislator One</a><p>Policy analyst working for New Jersey government public affairs.</p></div>
           <div><a href='/in/crypto-2/'>Crypto Two</a><p>Politics and cryptocurrency sales manager serving New Jersey business accounts.</p></div>''' + '</main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, p): self.p = p
             def goto(self, *args, **kwargs): self.p.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == "url" else getattr(self.p, key)
@@ -414,6 +415,7 @@ class BrowserMockTests(unittest.TestCase):
           <p>Government public policy analyst working in New Jersey state government</p>
           </div></main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -428,6 +430,7 @@ class BrowserMockTests(unittest.TestCase):
           <p>Government public policy analyst working in New Jersey state government</p>
           </div></main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -485,6 +488,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_page_with_only_unmatched_profiles_advances(self):
         doc = '<html><body><main><div><a href="/in/unmatched-professional/">Unmatched Professional</a><p>Chef working with fresh ingredients in a restaurant.</p></div></main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -500,6 +504,7 @@ class BrowserMockTests(unittest.TestCase):
                <p>Government public policy analyst in New Jersey</p></div>
           </main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -519,6 +524,7 @@ class BrowserMockTests(unittest.TestCase):
             def count(self): return self.anchors.count()
             def nth(self, i): return BrokenAnchor(self.anchors.nth(i))
         class BrokenPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def locator(self, selector):
@@ -620,6 +626,7 @@ class BrowserMockTests(unittest.TestCase):
           <p>1st degree connection. Government public policy analyst working in New Jersey</p>
           </div></main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -628,6 +635,466 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(added, 0)
         self.assertIsNone(self.db.next_profile())
         self.assertEqual(self.db.setting('page:government'), '2')
+
+    def test_short_search_card_text_is_not_lost_or_mixed_with_neighbor(self):
+        doc = """<html><body><main>
+            <div><a href='/in/policy-person/'>Policy Person</a><p>Policy adviser.</p></div>
+            <div><a href='/in/chef-person/'>Chef Person</a><p>Restaurant chef.</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser): self.browser = browser
+            def goto(self, *args, **kwargs): self.browser.set_content(doc)
+            def __getattr__(self, name): return getattr(self.browser, name)
+        count = collect_results(SearchPage(self.page), self.db, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 100,
+                                {'min_score': 25})
+        self.assertEqual(count, 1)
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/policy-person/')
+        self.assertEqual(self.db.counts().get('queued'), 1)
+
+    def test_search_redirect_skips_only_that_phrase_and_continues(self):
+        doc = """<main><a href='/in/unrelated-person/'>Unrelated Person</a>
+            <p>Government policy analyst</p></main>"""
+        good = """<main><div><a href='/in/real-member/'>Real Member</a>
+            <p>Government policy analyst in New Jersey</p></div></main>"""
+        class RedirectedPage:
+            def __init__(self, browser):
+                self.browser = browser
+                self.url = 'https://www.linkedin.com/feed/'
+                self.visits = []
+            def goto(self, url, *args, **kwargs):
+                self.visits.append(url)
+                if 'keywords=government' in url:
+                    self.url = 'https://www.linkedin.com/search/results/people/'
+                    self.browser.set_content(good)
+                else:
+                    self.url = 'https://www.linkedin.com/feed/'
+                    self.browser.set_content(doc)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        page = RedirectedPage(self.page)
+        messages = []
+        self.assertEqual(collect_results(page, self.db, ['policy', 'government'],
+                         ['policy'], threading.Event(), messages.append, 100), 1)
+        self.assertEqual(len(page.visits), 2)
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+        self.assertEqual(self.db.setting('page:government'), '2')
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/real-member/')
+        self.assertIn('redirected', ' '.join(messages))
+
+    def test_search_timeout_keeps_cursor_and_tries_other_searches(self):
+        doc = """<main><div><a href='/in/second-search-member/'>Second Search Member</a>
+          <p>Government public policy analyst in New Jersey</p></div></main>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = []
+            def goto(self, url, **kwargs):
+                self.visits.append(url)
+                if 'keywords=policy' in url:
+                    raise TimeoutError("Simulated search navigation timeout")
+                self.browser.set_content(doc)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        page = SearchPage(self.page)
+        messages = []
+        added = collect_results(page, self.db, ['policy', 'government'], ['policy'],
+                                threading.Event(), messages.append, 100)
+        self.assertEqual(added, 1)
+        self.assertEqual(len(page.visits), 2)
+        self.assertEqual(self.db.setting("page:policy", "1"), "1")
+        self.assertEqual(self.db.setting("page:government"), "2")
+        self.assertIn("timed out", " ".join(messages))
+        self.assertEqual(self.db.next_profile()["url"],
+                         "https://www.linkedin.com/in/second-search-member/")
+
+    def test_timeout_showing_account_restriction_does_not_continue(self):
+        doc = "<main><h2>Your account has been temporarily restricted</h2></main>"
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = 0
+            def goto(self, url, **kwargs):
+                self.visits += 1
+                self.browser.set_content(doc)
+                raise TimeoutError("Timed out after restriction appeared")
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        page = SearchPage(self.page)
+        with self.assertRaises(ProtectionScreen):
+            collect_results(page, self.db, ['policy', 'government'], ['policy'],
+                            threading.Event(), lambda _: None, 100)
+        self.assertEqual(page.visits, 1)
+        self.assertIsNone(self.db.setting("page:policy"))
+        self.assertIsNone(self.db.next_profile())
+
+    def test_search_server_error_skips_phrase_without_stopping_campaign(self):
+        from types import SimpleNamespace
+        class ServerErrorPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = 0
+            def goto(self, url, **kwargs):
+                self.visits += 1
+                if 'keywords=policy' in url:
+                    self.browser.set_content('<main></main>')
+                    return SimpleNamespace(status=503)
+                self.browser.set_content('<main><div><a href="/in/valid-member/">Valid Member</a>'
+                                         '<p>Government policy analyst in New Jersey</p></div></main>')
+                return SimpleNamespace(status=200)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        page = ServerErrorPage(self.page)
+        count = collect_results(page, self.db, ['policy', 'government'], ['policy'],
+                                threading.Event(), lambda _: None, 100)
+        self.assertEqual(count, 1)
+        self.assertEqual(page.visits, 2)
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+        self.assertEqual(self.db.setting('page:government'), '2')
+
+    def test_restriction_after_search_hydration_stops_without_more_navigation(self):
+        class LateAnchors:
+            def count(self): return 0
+            @property
+            def first(self):
+                return self
+            def wait_for(self, **kwargs):
+                self_test.page.set_content(
+                    "<main><h1>Your account has been temporarily restricted</h1>"
+                    "<p>LinkedIn has limited automated profile access.</p></main>")
+                raise TimeoutError("Results replaced with restriction page")
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = 0
+            def goto(self, *args, **kwargs):
+                self.visits += 1
+                self.browser.set_content("<main></main>")
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return LateAnchors()
+                return self.browser.locator(selector)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        self_test = self
+        pg = SearchPage(self.page)
+        with self.assertRaises(ProtectionScreen):
+            collect_results(pg, self.db, ["policy", "government"], ["policy"],
+                            threading.Event(), lambda _: None, 100)
+        self.assertEqual(pg.visits, 1)
+        self.assertEqual(self.db.counts().get("queued", 0), 0)
+        self.assertIsNone(self.db.setting("page:policy"))
+
+    def test_pasted_restriction_heading_in_blog_and_comments_is_not_account_warning(self):
+        # Even an exact h1-h6 notice inside member-authored content must not
+        # stop a healthy session before reaching its verified Connect button.
+        posts = (
+            "<article><h2>Your account has been temporarily restricted</h2>"
+            "<p>I received this warning last year.</p></article>",
+            "<div class='comments-comment-item'><h4>Your account is temporarily restricted</h4>"
+            "<p>Here is what my friend received.</p></div>",
+            "<section class='pv-about-section'><h6>Access to your account has been temporarily restricted</h6></section>",
+            "<div class='feed-shared-update-v2'><h1>We've Restricted Your Account Temporarily</h1></div>",
+        )
+        for post in posts:
+            with self.subTest(post=post[:70]):
+                doc = """<html><body><main>
+                  <section><h1>Test Example</h1>
+                    <button id="connect" onclick="this.textContent='Pending'">Connect</button></section>""" + post + """
+                  </main></body></html>"""
+                result, reason = self.run_mock(doc)
+                self.assertEqual(result, 'sent', reason)
+                self.assertEqual(self.page.locator("#connect").inner_text(), "Pending")
+
+    def test_pasted_heading_with_alert_role_inside_article_is_not_site_warning(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section>
+          <article><div role="alertdialog">
+            <h2>Your account has been temporarily restricted</h2>
+            <p>A quoted message from last week.</p>
+          </div></article></main></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        check_protection(LocalPage(self.page))
+
+    def test_quoted_restriction_alert_inside_article_is_not_site_warning(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section>
+          <article><div role='alert'>Your account has been temporarily restricted</div></article>
+          </main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, "sent", reason)
+
+    def test_real_restriction_dialog_stops_even_on_profile_page(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section></main>
+          <div role='alertdialog'><h4>Your account is temporarily restricted</h4></div>
+          </body></html>"""
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
+    def test_pasted_restriction_title_as_first_line_in_article_not_block(self):
+        doc = """<html><body><main><article>
+          <h2>Your account has been temporarily restricted</h2>
+          <p>This is an example of a warning I received.</p>
+          </article></main></body></html>"""
+        self.page.set_content(doc)
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        check_protection(SearchPage(self.page))
+
+    def test_pasted_warning_in_comment_modal_does_not_count_as_site_warning(self):
+        # Reading somebody's comment in a dialog must not be misread as a
+        # restriction on the viewer's own account.
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1></section>
+          <div role="dialog"><h2>Comments</h2><article>
+            <p>Your account has been temporarily restricted</p>
+          </article></div></main></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        check_protection(LocalPage(self.page))
+
+    def test_long_genuine_restriction_dialog_is_not_missed(self):
+        long_details = "Please review your account security settings. " * 30
+        doc = """<html><body><main><h1>Test Example</h1></main>
+          <div role="dialog"><h2>Your account has been temporarily restricted</h2>
+          <p>""" + long_details + """</p></div></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        with self.assertRaises(ProtectionScreen):
+            check_protection(LocalPage(self.page))
+
+    def test_genuine_site_dialog_still_detects_explicit_restriction(self):
+        doc = """<html><body><main><h1>Test Example</h1></main>
+          <div role="dialog"><h2>Your account is temporarily restricted</h2>
+            <p>Review your account to restore access.</p></div></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        with self.assertRaises(ProtectionScreen):
+            check_protection(LocalPage(self.page))
+
+    def test_pasted_standalone_warning_in_short_member_main_is_not_a_block(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <p>Your account has been temporarily restricted</p>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, "sent", reason)
+
+    def test_documented_restriction_titles_halt_before_invitation(self):
+        # These are documented visible variants, not claims about LinkedIn's
+        # current production HTML heading tags.
+        titles = (
+            "Your account is temporarily restricted",
+            "Access to your account has been temporarily restricted",
+            "We've Restricted Your Account Temporarily",
+            "Your account has been temporarily restricted as a precaution",
+            "Your account has been permanently restricted",
+        )
+        for index, title in enumerate(titles):
+            with self.subTest(title=title):
+                heading = ("h1", "h2", "h4", "h5", "h6")[index]
+                doc = html(f"<div role='alertdialog'><{heading}>{title}</{heading}></div>"
+                           "<button id='connect' onclick=\"this.textContent='Pending'\">Connect</button>")
+                with self.assertRaises(ProtectionScreen):
+                    self.run_mock(doc)
+                self.assertEqual(self.db.total_attempts(), 0)
+                self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
+    def test_h4_and_h6_restriction_headings_stop_before_click(self):
+        for tag in ("h4", "h6"):
+            with self.subTest(tag=tag):
+                doc = html(f"""<div role="alertdialog"><{tag}>Your account has been temporarily restricted</{tag}></div>
+                    <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+                with self.assertRaises(ProtectionScreen):
+                    self.run_mock(doc)
+                self.assertEqual(self.db.total_attempts(), 0)
+                self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
+    def test_late_h3_restriction_heading_stops_even_after_many_headings(self):
+        earlier = "".join(f"<h3>Other member section {i}</h3>" for i in range(40))
+        doc = html(earlier + """<div role="alertdialog"><h3>Your account has been temporarily restricted</h3></div>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
+    def test_unrelated_heading_about_restrictions_is_not_a_block(self):
+        # This is an unrelated professional section outside the verified
+        # member's action panel. Identity ambiguity must stay fail-closed.
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id="connect" onclick="this.textContent='Pending'">Connect</button>
+          </section>
+          <aside><h3>Research into temporarily restricted online accounts</h3></aside>
+          </main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, "sent", reason)
+
+    def test_long_restriction_page_stops_before_click(self):
+        # The exact banner LinkedIn displayed can be surrounded by long
+        # explanations that bypass the previous short-text heuristic.
+        long_text = 'LinkedIn asks users to review extensions. ' * 30
+        doc = html("""<div role="alertdialog"><h2>Your account has been temporarily restricted</h2>
+            <p>""" + long_text + """</p></div>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator("button#connect").inner_text(), "Connect")
+
+    def test_hidden_restriction_heading_does_not_halt(self):
+        doc = html("""<h2 hidden>Your account has been temporarily restricted</h2>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+
+    def test_readable_new_profile_does_not_hide_other_unnamed_new_profile(self):
+        first = """<html><body><main>
+            <div><a href='/in/known-new/'>Known New</a>
+                <p>Policy analyst in government</p></div>
+            <div><a href='/in/unnamed-new/'>View profile</a></div>
+            </main></body></html>"""
+        second = """<html><body><main>
+            <div><a href='/in/known-new/'>Known New</a>
+                <p>Policy analyst in government</p></div>
+            <div><a href='/in/unnamed-new/'>Unnamed New</a>
+                <p>Policy analyst in government</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.document = first
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(self.document)
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+        page = SearchPage(self.page)
+        added = collect_results(page, self.db, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 100)
+        self.assertEqual(added, 1)
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+        self.assertEqual(self.db.counts().get('queued'), 1)
+        # When the missing name becomes readable, dedupe the first candidate
+        # and advance after collecting the second one.
+        page.document = second
+        added = collect_results(page, self.db, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 100)
+        self.assertEqual(added, 1)
+        self.assertEqual(self.db.counts().get('queued'), 2)
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_processed_generic_link_does_not_mask_new_unnamed_member(self):
+        known = 'https://www.linkedin.com/in/known-member/'
+        self.db.add(known, 'Known Member', 'policy', 25)
+        self.db.mark(known, 'skipped', 'Already connected')
+        doc = """<html><body><main>
+          <div><a href='/in/known-member/'>View profile</a></div>
+          <div><a href='/in/new-unnamed-member/' aria-label='View profile'>View profile</a></div>
+          </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return getattr(self.page, key)
+        messages = []
+        added = collect_results(SearchPage(self.page), self.db, ['government'],
+                                ['policy'], threading.Event(), messages.append, 100)
+        self.assertEqual(added, 0)
+        self.assertEqual(self.db.setting('page:government', '1'), '1')
+        self.assertIn('lack identifiable names', ' '.join(messages))
+
+    def test_page_of_only_processed_generic_links_can_advance(self):
+        known = 'https://www.linkedin.com/in/known-member/'
+        self.db.add(known, 'Known Member', 'policy', 25)
+        self.db.mark(known, 'skipped', 'Already connected')
+        doc = "<html><body><main><a href='/in/known-member/'>View profile</a></main></body></html>"
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return getattr(self.page, key)
+        added = collect_results(SearchPage(self.page), self.db, ['government'],
+                                ['policy'], threading.Event(), lambda _: None, 100)
+        self.assertEqual(added, 0)
+        self.assertEqual(self.db.setting('page:government'), '2')
+
+    def test_processed_search_members_are_not_reinspected(self):
+        known = 'https://www.linkedin.com/in/processed-person/'
+        self.db.add(known, 'Processed Person', 'government policy', 50)
+        self.db.mark(known, 'skipped', 'Already connected')
+        doc = """<html><body><main>
+            <div><a id='known' href='/in/processed-person/'>Processed Person</a>
+                 <p>Government public policy analyst in NJ</p></div>
+            <div><a id='new' href='/in/new-person/'>New Person</a>
+                 <p>Government public policy analyst in NJ</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        result = collect_results(SearchPage(self.page), self.db, ['government'],
+                                 ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(result, 1)
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/new-person/')
+        self.assertEqual(self.db.counts().get('skipped'), 1)
+        self.assertEqual(self.db.setting('page:government'), '2')
+
+    def test_explicit_third_degree_card_is_filtered_for_second_only(self):
+        doc = """<html><body><main>
+            <div><a href='/in/third-person/'>Third Person</a>
+                 <p>3rd degree connection · Public policy analyst in New Jersey</p></div>
+            <div><a href='/in/unknown-person/'>Unknown Person</a>
+                 <p>Public policy analyst in New Jersey; degree not shown</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        count = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200,
+                                {'degree': '2nd only', 'min_score': 25})
+        self.assertEqual(count, 1)
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/unknown-person/')
 
     def test_visible_restriction_alert_still_halts_before_click(self):
         doc = html("""<div role="alert">You've reached the invitation limit</div>
@@ -662,7 +1129,7 @@ class BrowserMockTests(unittest.TestCase):
 
     def test_restriction_halts(self):
         with self.assertRaises(ProtectionScreen):
-            self.run_mock(html('<p>You’ve reached the invitation limit</p>'))
+            self.run_mock(html('<div role="alert">You’ve reached the invitation limit</div>'))
 
     def test_unknown_modal_is_uncertain(self):
         doc = html('''<button onclick="document.getElementById('d').hidden=false">Connect</button>''', '''
@@ -684,6 +1151,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_zero_new_matches_advances_to_later_search_page(self):
         doc = '<html><body><main><div><a href="/in/known-person/">Known Person</a><p>Government political affairs adviser in New Jersey</p></div></main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, p): self.p = p
             def goto(self, *args, **kwargs): self.p.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == "url" else getattr(self.p, key)
@@ -827,6 +1295,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_bad_profile_name_link_not_queued(self):
         doc = '<html><body><main><div><a href="/in/legislator/">View profile</a><p>Government policy and public affairs expert.</p></div></main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key):

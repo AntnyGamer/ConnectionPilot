@@ -124,6 +124,9 @@ class LogicTests(unittest.TestCase):
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
         self.assertTrue(has_stop_signal('Please complete CAPTCHA'))
+        # The broad "temporarily restricted" phrase already covers the
+        # removed redundant full restriction-message entry.
+        self.assertTrue(has_stop_signal('Your account has been temporarily restricted'))
         self.assertFalse(has_stop_signal('Connection request sent'))
     def test_work_hours(self):
         self.assertTrue(in_work_hours(datetime(2026, 11, 2, 10, tzinfo=TZ), 9, 19))
@@ -180,6 +183,133 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.setting('term'), 'New Jersey')
         self.db.log('example','OK')
         self.assertEqual(self.db.history()[0][1], 'example')
+    def test_initial_attempt_insert_does_not_do_redundant_update(self):
+        url = "https://www.linkedin.com/in/write-once/"
+        self.db.add(url, "Write Once", "government", 25)
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE attempt_changes(result TEXT)")
+            conn.execute("""CREATE TRIGGER capture_attempt_update AFTER UPDATE
+                ON attempts BEGIN
+                    INSERT INTO attempt_changes(result) VALUES(NEW.result);
+                END""")
+        self.db.mark(url, "uncertain", "Attempt initiated")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM attempt_changes").fetchone()[0], 0)
+            first_time = conn.execute(
+                "SELECT initiated_at FROM attempts WHERE url=?", (url,)).fetchone()[0]
+        self.db.mark(url, "sent", "Confirmed")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT result FROM attempt_changes").fetchone()[0], "sent")
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM attempt_changes").fetchone()[0], 1)
+            row = conn.execute(
+                "SELECT initiated_at, result FROM attempts WHERE url=?", (url,)).fetchone()
+            self.assertEqual(tuple(row), (first_time, "sent"))
+        self.db.mark(url, "skipped", "Later state change")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT result FROM attempt_changes ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()[0], "skipped")
+        self.assertEqual(self.db.total_attempts(), 1)
+
+    def test_identical_setting_save_does_not_write_a_second_time(self):
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE setting_writes(value TEXT)")
+            conn.execute("""CREATE TRIGGER record_setting_update AFTER UPDATE
+                ON settings BEGIN
+                    INSERT INTO setting_writes(value) VALUES(NEW.value);
+                END""")
+        self.db.set_setting("ui:searches", "policy")
+        self.db.set_setting("ui:searches", "policy")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM setting_writes").fetchone()[0], 0)
+        self.db.set_setting("ui:searches", "government")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT value FROM setting_writes").fetchone()[0], "government")
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM setting_writes").fetchone()[0], 1)
+        self.assertEqual(self.db.setting("ui:searches"), "government")
+
+    def test_batch_settings_preserve_values_and_ignore_unchanged_rows(self):
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE setting_changes(key TEXT, value TEXT)")
+            conn.execute("""CREATE TRIGGER track_setting_changes AFTER UPDATE ON settings
+                BEGIN
+                    INSERT INTO setting_changes(key, value) VALUES(NEW.key, NEW.value);
+                END""")
+        values = {"ui:searches": "government\npolicy", "ui:matches": "law, policy",
+                  "ui:daily": 200, "ui:cooldown": 90.5}
+        self.db.set_settings(values)
+        for key, value in values.items():
+            self.assertEqual(self.db.setting(key), str(value))
+        self.db.set_settings(values)
+        with self.db._conn() as conn:
+            self.assertEqual(
+                conn.execute("SELECT count(*) FROM setting_changes").fetchone()[0], 0)
+        self.db.set_settings({"ui:daily": 180, "ui:searches": "government\npolicy"})
+        with self.db._conn() as conn:
+            self.assertEqual(
+                [tuple(row) for row in conn.execute(
+                    "SELECT key, value FROM setting_changes")], [("ui:daily", "180")])
+        self.assertEqual(self.db.setting("ui:daily"), "180")
+
+    def test_batch_setting_failure_rolls_back_all_keys(self):
+        self.db.set_setting("ui:daily", "200")
+        with self.db._conn() as conn:
+            conn.execute("""CREATE TRIGGER block_test_setting BEFORE INSERT ON settings
+                WHEN NEW.key='ui:reject' BEGIN
+                    SELECT RAISE(ABORT, 'test rollback');
+                END""")
+        with self.assertRaises(Exception):
+            self.db.set_settings({"ui:daily": "250", "ui:reject": "1"})
+        self.assertEqual(self.db.setting("ui:daily"), "200")
+        self.assertIsNone(self.db.setting("ui:reject"))
+
+    def test_queued_count_matches_full_status_counts(self):
+        urls = [f"https://www.linkedin.com/in/count-{i}/" for i in range(6)]
+        for i, url in enumerate(urls):
+            self.db.add(url, f"Count {i}", "policy", 25)
+        self.db.mark(urls[1], "sent", "Invitation confirmed")
+        self.db.mark(urls[2], "skipped", "Already connected")
+        self.db.mark(urls[3], "filtered", "Not relevant")
+        self.db.mark(urls[4], "uncertain", "Click began")
+        self.assertEqual(self.db.queued_count(), 2)
+        self.assertEqual(self.db.queued_count(), self.db.counts().get("queued", 0))
+        with self.db._conn() as conn:
+            plan = conn.execute(
+                "EXPLAIN QUERY PLAN SELECT count(*) FROM profiles WHERE status='queued'"
+            ).fetchall()
+        self.assertTrue(any("profiles_queue_priority" in row[3] for row in plan), plan)
+        self.db.clear_campaign_data()
+        self.assertEqual(self.db.queued_count(), 0)
+
+    def test_repeated_mark_does_not_rewrite_attempt_when_result_unchanged(self):
+        url = "https://www.linkedin.com/in/repeat-status/"
+        self.db.add(url, "Repeat Status", "policy", 25)
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE result_writes(result TEXT)")
+            conn.execute("""CREATE TRIGGER capture_repeat_update AFTER UPDATE ON attempts
+                BEGIN INSERT INTO result_writes(result) VALUES(NEW.result); END""")
+        self.db.mark(url, "uncertain", "First click")
+        with self.db._conn() as conn:
+            first_time = conn.execute(
+                "SELECT initiated_at FROM attempts WHERE url=?", (url,)).fetchone()[0]
+        self.db.mark(url, "uncertain", "Same status")
+        self.db.mark(url, "sent", "Confirmed")
+        self.db.mark(url, "sent", "Same confirmation")
+        self.db.mark(url, "skipped", "Later status")
+        self.db.mark(url, "skipped", "Same later status")
+        with self.db._conn() as conn:
+            self.assertEqual([row[0] for row in conn.execute(
+                "SELECT result FROM result_writes")], ["sent", "skipped"])
+            row = conn.execute(
+                "SELECT initiated_at, result FROM attempts WHERE url=?", (url,)).fetchone()
+        self.assertEqual(tuple(row), (first_time, "skipped"))
+
     def test_filters_can_be_reconsidered(self):
         a = 'https://www.linkedin.com/in/profile-filtered/'
         self.db.add(a, 'Profile', 'public policy', 25)
@@ -209,6 +339,7 @@ class StorageTests(unittest.TestCase):
             'menu': "No unambiguous Connect menu action.",
             'no-control': "No Connect option in verified profile introduction.",
             'disabled': "Connect action is unavailable; nothing clicked.",
+            'inspection': "Profile inspection failed before any click; no automatic reinspection: timeout",
         }
         for slug, reason in cases.items():
             url = base + slug + '/'
@@ -251,6 +382,18 @@ class StorageTests(unittest.TestCase):
             self.assertIsNone(self.db.setting(key))
         self.assertEqual(self.db.setting('ui:daily'), '100')
         self.assertEqual(self.db.setting('ui:browser_channel'), 'chrome')
+
+    def test_processed_urls_exclude_attempted_or_completed_but_not_queued(self):
+        base = "https://www.linkedin.com/in/"
+        self.db.add(base + "pending/", "Pending Person", "policy", 25)
+        self.db.add(base + "finished/", "Finished Person", "policy", 25)
+        self.db.add(base + "attempted/", "Attempted Person", "policy", 25)
+        self.db.mark(base + "finished/", "filtered", "Bad match")
+        self.db.mark(base + "attempted/", "uncertain", "Click may have sent")
+        self.db.mark(base + "attempted/", "queued", "stale state")
+        self.assertEqual(self.db.processed_urls(), {
+            base + "finished/", base + "attempted/"
+        })
 
     def test_dashboard_snapshot_matches_individual_counters(self):
         a = 'https://www.linkedin.com/in/dashboard-a/'
@@ -376,16 +519,6 @@ class StorageTests(unittest.TestCase):
             conn.execute("INSERT INTO attempts VALUES (?,?,?)", (first, '2026-11-02T10:00:00-05:00', 'sent'))
             conn.execute("INSERT INTO attempts VALUES (?,?,?)", (second, '2026-11-01T10:00:00-05:00', 'sent'))
         self.assertEqual(self.db.last_attempt_at(), '2026-11-02T10:00:00-05:00')
-
-    def test_inspection_failures_persist_and_do_not_create_invitation_attempts(self):
-        url = 'https://www.linkedin.com/in/broken-profile/'
-        self.db.add(url, 'Broken Profile', 'government', 25)
-        self.assertEqual(self.db.record_inspection_failure(url), 1)
-        reopened = Store(self.db.path)
-        self.assertEqual(reopened.record_inspection_failure(url), 2)
-        self.assertEqual(reopened.record_inspection_failure(url), 3)
-        self.assertEqual(reopened.next_profile()['url'], url)
-        self.assertFalse(reopened.has_attempt(url))
 
     def test_never_retry_uncertain(self):
         a='https://www.linkedin.com/in/alice/'

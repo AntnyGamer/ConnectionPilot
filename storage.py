@@ -74,6 +74,18 @@ class Store:
                        (score, headline[:500], url, score))
             return False
 
+    def processed_urls(self):
+        """Previously completed people should not be read from search cards again.
+
+        Queued candidates can still receive higher relevance scores when they
+        appear in a later search. An invitation attempt always takes priority
+        over a stale queued status.
+        """
+        with self._conn() as db:
+            rows = db.execute("""SELECT url FROM profiles WHERE status != 'queued'
+                OR EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""")
+            return {row[0] for row in rows}
+
     def has_attempt(self, url):
         with self._conn() as db:
             return db.execute("SELECT 1 FROM attempts WHERE url=?", (url,)).fetchone() is not None
@@ -98,9 +110,19 @@ class Store:
             # happens. Later confirmations or skips update the result without
             # changing the immutable initiation timestamp.
             if status in ("uncertain", "sent"):
-                db.execute("INSERT OR IGNORE INTO attempts(url, initiated_at, result) VALUES (?,?,?)",
-                           (url, now, status))
-            db.execute("UPDATE attempts SET result=? WHERE url=?", (status, url))
+                # Record the first potentially sending click before it occurs.
+                # An existing attempt retains its original initiation time.
+                # One UPSERT handles insertion and subsequent confirmations.
+                db.execute("""INSERT INTO attempts(url, initiated_at, result)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(url) DO UPDATE SET result=excluded.result
+                    WHERE attempts.result IS NOT excluded.result""",
+                    (url, now, status))
+            else:
+                # A later non-sending status must not erase the immutable
+                # attempt ledger or cause a redundant same-value write.
+                db.execute("""UPDATE attempts SET result=?
+                    WHERE url=? AND result IS NOT ?""", (status, url, status))
 
     def reset_search_pages(self, searches):
         """Restart discovery when relevant keywords or filters change."""
@@ -129,6 +151,7 @@ class Store:
                     OR reason LIKE 'No unambiguous Connect menu action.%'
                     OR reason LIKE 'Connect action is unavailable;%'
                     OR reason LIKE 'Multiple visible Connect controls;%'
+                    OR reason LIKE 'Profile inspection failed before any click; no automatic reinspection:%'
                   )""", (self._now(),))
             return cur.rowcount
 
@@ -153,8 +176,15 @@ class Store:
             return row[0] if row else default
 
     def set_setting(self, key, value):
+        self.set_settings({key: value})
+
+    def set_settings(self, values):
+        """Save preferences in one atomic transaction, skipping unchanged rows."""
         with self._conn() as db:
-            db.execute("INSERT INTO settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+            db.executemany("""INSERT INTO settings VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                WHERE settings.value IS NOT excluded.value""",
+                ((key, str(value)) for key, value in values.items()))
 
     def log(self, event, detail=""):
         with self._conn() as db:
@@ -191,6 +221,12 @@ class Store:
             rows = db.execute("SELECT status,count(*) n FROM profiles GROUP BY status").fetchall()
             return {row[0]: row[1] for row in rows}
 
+    def queued_count(self):
+        """Use the existing queued-only index instead of grouping all states."""
+        with self._conn() as db:
+            return db.execute(
+                "SELECT count(*) FROM profiles WHERE status='queued'").fetchone()[0]
+
     def dashboard_stats(self):
         """Read dashboard counters together from one consistent SQLite snapshot."""
         start, end = self._today_bounds()
@@ -223,14 +259,6 @@ class Store:
             row = db.execute("""SELECT initiated_at FROM attempts
                                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchone()
             return row[0] if row else None
-
-    def record_inspection_failure(self, url):
-        """Count pre-click inspection failures, surviving application restarts."""
-        key = "inspect_fail:" + url
-        with self._conn() as db:
-            db.execute("""INSERT INTO settings(key, value) VALUES (?, '1')
-                ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1""", (key,))
-            return int(db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()[0])
 
     def history(self, limit=40):
         with self._conn() as db:

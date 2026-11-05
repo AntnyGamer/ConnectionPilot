@@ -15,6 +15,15 @@ from logic import (has_stop_signal, in_work_hours, local_now, match_score,
                    clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours)
 
+# Restricted account titles are checked as complete headings, never as a
+# keyword occurring anywhere in someone's authored text.
+RESTRICTION_TITLE = re.compile(
+    r"^\s*(?:Your account has been (?:temporarily |permanently )?restricted"
+    r"(?: as a precaution)?|Your account is temporarily restricted|"
+    r"Access to your account has been temporarily restricted|"
+    r"We['’]ve restricted your account temporarily)\s*$", re.I)
+
+
 class StopRun(Exception):
     pass
 
@@ -54,6 +63,31 @@ def check_protection(page):
     if any(path == prefix or path.startswith(prefix + "/") for prefix in
            ("/login", "/authwall", "/checkpoint", "/challenge", "/uas", "/login-submit")):
         raise ProtectionScreen("LinkedIn displayed a sign-in, checkpoint or verification page")
+    # Profile bios, posts, articles and comments can quote the exact account
+    # warning. On content pages, only site-owned alerts or direct body-level
+    # headings are evidence of an account warning; ordinary main/article
+    # headings are not. Checkpoints are handled by their URL above.
+    content_page = (normalize_profile(page.url) is not None or
+                    any(path == p or path.startswith(p + "/") for p in
+                        ("/feed", "/search", "/posts", "/pulse", "/articles",
+                         "/groups", "/company", "/news")))
+    # Match the complete official title rather than a keyword in a bio.
+    restricted = page.locator('h1, h2, h3, h4, h5, h6, [role="heading"]').filter(
+        has_text=RESTRICTION_TITLE)
+    for heading in restricted.all():
+        if not heading.is_visible():
+            continue
+        if content_page and not heading.evaluate("""el => {
+            const authored = el.closest(
+              'article, [role="article"], .feed-shared-update-v2, .comments-comment-item, .update-components-text, .pv-about-section, .pv-profile-section');
+            if (authored) return false;
+            const shell = el.closest(
+              '[role="alert"], [role="alertdialog"], .artdeco-toast-item, .artdeco-inline-feedback');
+            return Boolean(shell) || el.parentElement === document.body;
+        }"""):
+            continue
+        raise ProtectionScreen(
+            "LinkedIn reports that this account is restricted; stop automated access")
     # A member's biography, activity, or job history can legitimately mention
     # "unusual activity", "captcha", or "security verification". Only treat
     # visible site-warning surfaces as account restrictions, not all page text.
@@ -63,8 +97,34 @@ def check_protection(page):
         'body > p, body > h1, body > h2'
     )
     for surface in warning_surfaces.all()[:50]:
-        if surface.is_visible() and has_stop_signal(surface.inner_text(timeout=3000)):
-            raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
+        if not surface.is_visible():
+            continue
+        # Ignore a role="alert" or a copied notice embedded in a member's
+        # article/comment. Site warning UI is not part of user-authored text.
+        try:
+            inside_member_content = surface.evaluate(
+                """el => Boolean(el.closest('article, [role="article"], .feed-shared-update-v2, .comments-comment-item, .update-components-text, .pv-about-section, .pv-profile-section'))""")
+        except AttributeError:
+            inside_member_content = False  # Lightweight offline fake locator.
+        if inside_member_content:
+            continue
+        warning_text = surface.inner_text(timeout=3000)
+        if not has_stop_signal(warning_text):
+            continue
+        if surface.get_attribute("role") == "dialog":
+            # Comment/article dialogs can contain another member's pasted
+            # restriction notice. Only an actual short warning prompt at the
+            # start of an otherwise non-content dialog is site-level evidence.
+            if surface.evaluate("""el => Boolean(el.querySelector(
+                'article, [role="article"], .comments-comment-item, .feed-shared-update-v2'))"""):
+                continue
+            opening = [line.strip() for line in warning_text.splitlines()
+                       if line.strip()][:2]
+            exact_notice = any(RESTRICTION_TITLE.fullmatch(s) for s in opening)
+            if not exact_notice and (
+                    len(warning_text) > 800 or not any(has_stop_signal(s) for s in opening)):
+                continue
+        raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
     # Some warnings have no dialog/alert role. A short standalone notice
     # may be the entire main region; do not scan a full profile biography.
     main = page.locator("main")
@@ -79,19 +139,24 @@ def check_protection(page):
             }""", timeout=3000).strip()
         except AttributeError:
             text = main.first.inner_text(timeout=3000).strip()
-        if normalize_profile(page.url) is None:
-            first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
-            warning = len(text) <= 500 and has_stop_signal(first_line)
+        first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        if content_page:
+            # A restriction screen can replace the entire search/profile main
+            # without changing its URL. Only treat an exact title as a full
+            # page notice when no authored post, comment or profile section
+            # remains. Quoted messages in those areas must never be a block.
+            warning = bool(RESTRICTION_TITLE.fullmatch(first_line))
+            if warning:
+                try:
+                    authored = main.first.locator(
+                        'article, [role="article"], .comments-comment-item, '
+                        '.feed-shared-update-v2, .update-components-text, '
+                        '.pv-about-section, .pv-profile-section').count()
+                except AttributeError:
+                    authored = 0  # Minimal offline page stub.
+                warning = not authored
         else:
-            explicit = ("you've reached the invitation limit",
-                        "you've reached the weekly invitation limit",
-                        "invitation limit reached", "you're out of invitations",
-                        "your account has been restricted",
-                        "your account has been temporarily restricted", "too many invitations")
-            warning = len(text) <= 250 and any(
-                line.strip().casefold().replace("’", "'").startswith(explicit)
-                for line in text.splitlines()
-            )
+            warning = len(text) <= 500 and has_stop_signal(first_line)
         if warning:
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
@@ -125,12 +190,26 @@ def wait_or_stop(seconds, stop_event, pause_event, status):
     raise StopRun()
 
 
+def reject_denied_page(response):
+    """A denied/rate-limited navigation is not a retryable search result."""
+    code = getattr(response, "status", None)
+    if code in (403, 429, 999):
+        raise ProtectionScreen(
+            f"LinkedIn denied or limited page access (HTTP {code}); stop automated access")
+
+
 def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None, pause_event=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
     minimum_score = (filters or {}).get("min_score", 1)
     exclusions = None
+    # Only navigation timeouts are recoverable here; unexpected browser
+    # errors and LinkedIn protection screens must propagate normally.
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    # Terminal candidates cannot change during discovery. Load them once
+    # rather than querying all completed profiles per search phrase.
+    processed = store.processed_urls()
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
@@ -148,12 +227,29 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
         notify(f"Looking at page {page_no} for: {search}")
-        page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
-        # Wait for actual search results below instead of spending 1.7 seconds
-        # on every page even when the cards are already available.
+        try:
+            response = page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
+        except (PlaywrightTimeoutError, TimeoutError):
+            # Loading may have finished enough to display an account block.
+            # Never retry a timeout until protection is checked first.
+            check_protection(page)
+            notify(f"Search page {page_no} for '{search}' timed out; "
+                   "keeping its cursor and trying other searches.")
+            continue
+        reject_denied_page(response)
+        # An ordinary redirect or temporary server error is not evidence of
+        # account restriction. Skip only this search page and retain its cursor,
+        # but do not parse unrelated links as member search results.
         check_protection(page)
-        if "/login" in page.url.lower() or "/authwall" in page.url.lower():
-            raise StopRun("LinkedIn has logged you out; sign in and restart.")
+        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
+            notify(f"LinkedIn redirected the search for '{search}'; leaving page {page_no} "
+                   "pending and trying other search phrases.")
+            continue
+        code = getattr(response, "status", None)
+        if isinstance(code, int) and 500 <= code <= 599:
+            notify(f"LinkedIn returned a temporary server error (HTTP {code}) for "
+                   f"'{search}'; keeping page {page_no} pending.")
+            continue
         # Profile links inside visible main-content search results.
         anchors = page.locator('main a[href*="/in/"]')
         # A slow-loading result list is not proof that the search is exhausted.
@@ -163,9 +259,20 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 anchors.first.wait_for(state="attached", timeout=6000)
                 anchor_count = anchors.count()
             except Exception:
+                # A late restriction notice may replace the search results.
+                # Never refresh another LinkedIn page before checking again.
+                check_protection(page)
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
+        # Result hydration may have changed the page or redirected elsewhere.
+        # Check again before treating any links as search candidates.
+        check_protection(page)
+        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
+            notify(f"LinkedIn redirected the results for '{search}' during loading; "
+                   f"retaining page {page_no} and trying other search phrases.")
+            continue
         seen_this_page = set()
+        # Skip already processed people without extracting their card content.
         valid_profile_links = set()
         named_profile_links = set()
         extraction_errors = 0
@@ -188,6 +295,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 valid_profile_links.add(url)
                 if url in seen_this_page:
                     continue
+                if url in processed:
+                    # Skip a finished profile without re-reading their card.
+                    # Do not count them as evidence that every *new* profile
+                    # on this page has a readable member name.
+                    seen_this_page.add(url)
+                    continue
                 name = search_result_name(anchor.inner_text(timeout=1200) or "")
                 if not name:
                     name = search_result_name("", anchor.get_attribute("aria-label") or "")
@@ -201,13 +314,35 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # A plain "1st" in unrelated profile text is not sufficient.
                 # Search UI changes frequently. Use nearest card with enough text.
                 snippet = anchor.evaluate("""el => {
-                  let n=el; for(let j=0;j<6 && n;j++, n=n.parentElement){
-                    const t=(n.innerText||'').trim();
-                    if(t.length>=60 && t.length<1200) return t;
+                  // Do not drop short-but-useful descriptions; never borrow
+                  // search text from a different person's profile card.
+                  const key = a => {
+                    // Explicit base handles relative hrefs even in a local
+                    // test document without a normal browser page URL.
+                    const href = a.getAttribute('href') || '';
+                    const p = new URL(href, 'https://www.linkedin.com')
+                      .pathname.toLowerCase();
+                    return p.endsWith('/') ? p.slice(0, -1) : p;
+                  };
+                  const own = key(el);
+                  let best = (el.innerText || '').trim();
+                  for (let n = el.parentElement, j = 0; n && j < 6;
+                       n = n.parentElement, j++) {
+                    const people = n.querySelectorAll('a[href*="/in/"]');
+                    if (Array.from(people).some(a => key(a) !== own)) break;
+                    const t = (n.innerText || '').trim();
+                    if (t.length > best.length && t.length < 1200) best = t;
                   }
-                  return (el.innerText||'').trim();
+                  return best;
                 }""") or ""
                 if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
+                    continue
+                # Search cards that explicitly say 3rd degree can be
+                # excluded when a 2nd-only filter is enabled. Unspecified
+                # degree stays eligible for verification on the full profile.
+                if (str((filters or {}).get("degree", "Any")) == "2nd only"
+                        and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
+                                      snippet, re.I)):
                     continue
                 score = match_score(snippet, match_terms)
                 if score < max(0, int(minimum_score)):
@@ -230,13 +365,19 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # Keep this page pending: already collected leads are deduplicated
             # and the rest can be inspected safely after Resume.
             return added
+        # A readable new member on a mixed results page must not obscure a
+        # different, unnamed new member. Multiple links to a single person
+        # are fine once any one link supplies that person's actual name.
+        unnamed_new_links = valid_profile_links - processed - named_profile_links
         if extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
-        elif named_profile_links:
-            # A page with only non-matching candidates must still advance.
-            # Count member names BEFORE applying filters, so filtered-out
-            # profiles cannot trap discovery on the same search page.
+        elif unnamed_new_links:
+            notify(f"{len(unnamed_new_links)} new profile link(s) on page {page_no} "
+                   "lack identifiable names; retaining the page rather than dropping them.")
+        elif named_profile_links or (valid_profile_links and valid_profile_links.issubset(processed)):
+            # Every nonprocessed profile link was identifiable, or the page
+            # consisted entirely of previously completed people.
             store.set_setting(key, page_no + 1)
         elif valid_profile_links:
             notify(f"Profile URLs appeared for '{search}', but no member names could be read; "
@@ -245,7 +386,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
         notify(f"Queued {added} new matches this pass.")
         # Stop once we have enough to process for the current day; later passes discover more.
-        if store.counts().get("queued", 0) >= min(30, target):
+        if store.queued_count() >= min(30, target):
             break
     return added
 
@@ -395,7 +536,8 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     """Return sent/skipped/uncertain; never retry a potentially successful invitation."""
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
-    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    reject_denied_page(response)
     # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
     # verified introduction, retry the safe inspection without clicking.
     check_protection(page)
@@ -572,6 +714,18 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
 
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
     """Run in a background thread. One click launches one visible browser session."""
+    if stop_event.is_set():
+        raise StopRun()
+    # A completed goal needs no LinkedIn session or feed page view. Check
+    # the immutable click ledger locally before launching any browser.
+    attempted = store.total_attempts()
+    if attempted >= config["target"]:
+        counts = store.counts()
+        notify(f"Goal reached: {attempted} total invitation attempt(s), including "
+               f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
+               "unconfirmed. Some clicks may have been rejected by LinkedIn.")
+        on_update()
+        return
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -636,9 +790,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 if pause_event.is_set():
                     wait_or_stop(2, stop_event, pause_event, notify)
                     continue
-                counts = store.counts()
                 attempted = store.total_attempts()
                 if attempted >= config["target"]:
+                    # Reading grouped profile counts is unnecessary on every
+                    # idle/active worker iteration; only goal reporting uses it.
+                    counts = store.counts()
                     notify(f"Goal reached: {attempted} total invitation attempt(s), including "
                            f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
                            "unconfirmed. Some clicks may have been rejected by LinkedIn.")
@@ -718,14 +874,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                         result = "uncertain"
                         reason = "Browser error after an attempted click; set aside without retry: " + safe_diagnostic(exc, 150)
                     else:
-                        retries = store.record_inspection_failure(profile["url"])
-                        if retries < 3:
-                            notify(f"Profile inspection failed before any invitation action "
-                                   f"({retries}/3); retrying in 10 seconds: {safe_diagnostic(exc, 120)}")
-                            wait_or_stop(10, stop_event, pause_event, notify)
-                            continue
+                        # A slow page or an unrecognized layout is not a reason
+                        # to reload the same person's data multiple times.
+                        # Preserve the unattempted status and continue once.
                         result = "skipped"
-                        reason = "Could not inspect profile after three pre-click attempts: " + safe_diagnostic(exc, 150)
+                        reason = "Profile inspection failed before any click; no automatic reinspection: " + safe_diagnostic(exc, 150)
                 if result in ("paused", "deferred"):
                     continue
                 store.mark(profile["url"], result, reason)

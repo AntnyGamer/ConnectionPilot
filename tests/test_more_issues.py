@@ -12,6 +12,13 @@ from automation import collect_results
 from storage import Store
 
 
+def empty_locator():
+    """Minimal Playwright-like locator used by offline search-page fakes."""
+    return SimpleNamespace(
+        count=lambda: 0, all=lambda: [],
+        filter=lambda **kwargs: empty_locator())
+
+
 class BootstrapTests(unittest.TestCase):
     def test_launcher_uses_its_own_directory_for_main_and_requirements(self):
         from importlib.metadata import PackageNotFoundError
@@ -89,7 +96,7 @@ class QueueTests(unittest.TestCase):
                 if selector == 'main':
                     return SimpleNamespace(count=lambda: 1,
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
-                return SimpleNamespace(all=lambda: [])
+                return empty_locator()
 
         original_add = self.store.add
         def first_add(*args):
@@ -111,6 +118,35 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(added, 1)
         self.assertEqual(self.store.counts().get('queued'), 2)
         self.assertEqual(self.store.setting('page:government'), '2')
+
+    def test_processed_candidates_loaded_once_for_multiple_search_phrases(self):
+        from unittest.mock import patch
+
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, name): return '/in/new-candidate/'
+            def inner_text(self, **kwargs): return 'New Candidate'
+            def evaluate(self, _): return 'New Candidate is working in policy government.'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, i): return Anchor()
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def goto(self, *args, **kwargs): return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return empty_locator()
+
+        with patch.object(self.store, 'processed_urls', wraps=self.store.processed_urls) as processed:
+            count = collect_results(Page(), self.store,
+                                    ['policy', 'government'], ['policy'],
+                                    threading.Event(), lambda _: None, 200)
+        self.assertEqual(count, 1)
+        self.assertEqual(processed.call_count, 1)
+        self.assertEqual(self.store.counts().get('queued'), 1)
 
     def test_generic_action_links_do_not_discard_unread_people(self):
         """Valid profile URLs without names must not be treated as inspected leads."""
@@ -138,14 +174,14 @@ class QueueTests(unittest.TestCase):
                 if selector == 'main':
                     return SimpleNamespace(count=lambda: 1,
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
-                return SimpleNamespace(all=lambda: [])
+                return empty_locator()
 
         messages = []
         added = collect_results(Page(), self.store, ['government'], ['policy'],
                                 threading.Event(), messages.append, 20, {'min_score':25})
         self.assertEqual(added, 0)
         self.assertEqual(self.store.setting('page:government', '1'), '1')
-        self.assertIn('no member names', ' '.join(messages))
+        self.assertIn('lack identifiable names', ' '.join(messages))
 
 
 

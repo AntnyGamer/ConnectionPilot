@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from automation import ProtectionScreen, StopRun, check_protection, collect_results, run_campaign
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, run_campaign, send_one
 from logic import TZ
 from storage import Store
 
@@ -37,14 +37,72 @@ class WorkerRecoveryTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_fake(self):
+    def run_fake(self, expected_error=StopRun):
         with patch('playwright.sync_api.sync_playwright', return_value=self.manager), \
              patch('automation.check_protection'), \
              patch('automation.local_now', return_value=datetime(2026, 11, 2, 10, tzinfo=TZ)), \
              patch('automation.wait_or_stop') as sleeper:
-            with self.assertRaises(StopRun):
+            with self.assertRaises(expected_error):
                 run_campaign(self.store, self.config, self.stop, self.pause, self.status.append, lambda: None)
             return sleeper.call_count
+
+    def test_http_access_denied_stops_search_and_profile_immediately(self):
+        from types import SimpleNamespace
+        for code in (403, 429, 999):
+            with self.subTest(code=code):
+                self.page.goto.reset_mock()
+                self.page.goto.return_value = SimpleNamespace(status=code)
+                with self.assertRaises(ProtectionScreen):
+                    collect_results(self.page, self.store,
+                                    ['political science'], ['politic'],
+                                    self.stop, self.status.append, 10)
+                self.assertEqual(self.page.goto.call_count, 1)
+                self.assertIsNone(self.store.setting('page:political science'))
+                url = 'https://www.linkedin.com/in/denied-profile/'
+                self.store.add(url, 'Denied Profile', 'politics', 25)
+                with self.assertRaises(ProtectionScreen):
+                    send_one(self.page, {'url': url, 'name': 'Denied Profile'},
+                             self.store, self.status.append)
+                self.assertFalse(self.store.has_attempt(url))
+        self.page.goto.return_value = None
+
+    def test_worker_does_not_query_status_counts_until_goal_reached(self):
+        with patch.object(self.store, "counts",
+                          side_effect=AssertionError("Unexpected idle status scan")), \
+             patch("automation.collect_results", side_effect=StopRun("stop")):
+            self.run_fake()
+
+    def test_search_collection_checks_only_queued_count_not_all_statuses(self):
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, name): return "/in/government-worker/"
+            def inner_text(self, **kwargs): return "Government Worker"
+            def evaluate(self, expression):
+                return "Government Worker, public policy analyst in New Jersey"
+        class Anchors:
+            def count(self): return 1
+            def nth(self, index): return Anchor()
+        class Page:
+            url = "https://www.linkedin.com/search/results/people/"
+            def goto(self, *args, **kwargs): return SimpleNamespace(status=200)
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return SimpleNamespace(all=lambda: [], count=lambda: 0)
+
+        # Exercise the successful discovery path, including the queue
+        # threshold check. A full status GROUP BY would fail this test.
+        with patch("automation.check_protection"), \
+             patch.object(self.store, "counts",
+                          side_effect=AssertionError("Unexpected GROUP BY")), \
+             patch.object(self.store, "queued_count",
+                          wraps=self.store.queued_count) as queued:
+            added = collect_results(
+                Page(), self.store, ["policy"], ["policy"],
+                self.stop, self.status.append, 20)
+        self.assertEqual(added, 1)
+        queued.assert_called_once()
+        self.assertEqual(self.store.counts().get("queued"), 1)
 
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
@@ -57,6 +115,7 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.assertNotIn('--no-sandbox', settings.kwargs.get('args', []))
 
     def test_invalid_search_page_restarts_at_first_page(self):
+        self.page.url = 'https://www.linkedin.com/search/results/people/'
         self.page.wait_for_timeout = MagicMock()
         anchors = MagicMock()
         anchors.count.return_value = 0
@@ -77,15 +136,30 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.assertEqual(collect.call_count, 3)
             self.assertTrue(any('retry' in s.lower() for s in self.status))
 
-    def test_navigation_failure_retried_at_most_three_times(self):
+    def test_navigation_failure_is_not_revisited_automatically(self):
         url = 'https://www.linkedin.com/in/retry-person/'
         self.store.add(url, 'Retry Person', 'political science', 25)
         with patch('automation.send_one', side_effect=TimeoutError('slow page')) as send, \
              patch('automation.collect_results', side_effect=StopRun('done')):
-            self.assertEqual(self.run_fake(), 3)  # Two retries, then the normal skipped-profile throttle.
-            self.assertEqual(send.call_count, 3)
+            self.assertEqual(self.run_fake(), 1)  # Only the skipped-profile throttle.
+            self.assertEqual(send.call_count, 1)
         self.assertEqual(self.store.counts().get('skipped'), 1)
         self.assertFalse(self.store.has_attempt(url))
+        with self.store._conn() as db:
+            row = db.execute("SELECT value FROM settings WHERE key=?",
+                             ("inspect_fail:" + url,)).fetchone()
+        self.assertIsNone(row)  # No redundant per-person failure bookkeeping.
+
+    def test_restriction_halts_before_looking_at_next_profile(self):
+        urls = [f"https://www.linkedin.com/in/restricted-{i}/" for i in range(2)]
+        for i, url in enumerate(urls):
+            self.store.add(url, f"Restricted {i}", "policy", 25)
+        with patch('automation.send_one', side_effect=ProtectionScreen(
+                'LinkedIn reports that this account is restricted')) as send:
+            self.run_fake(ProtectionScreen)
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(self.store.counts().get("queued"), 2)
+        self.assertEqual(self.store.total_attempts(), 0)
 
 
 class SessionProtectionTests(unittest.TestCase):
@@ -102,7 +176,9 @@ class SessionProtectionTests(unittest.TestCase):
             def locator(self, selector):
                 if selector == 'main':
                     return SimpleNamespace(count=lambda: 1, first=Intro())
-                return SimpleNamespace(all=lambda: [])
+                return SimpleNamespace(
+                    all=lambda: [],
+                    filter=lambda **kwargs: SimpleNamespace(all=lambda: []))
         check_protection(Page())
 
     def test_large_main_text_filter_window_is_bounded(self):
@@ -157,7 +233,9 @@ class SessionProtectionTests(unittest.TestCase):
         for path in ('/in/login/', '/in/challenge/'):
             page = SimpleNamespace(url='https://www.linkedin.com'+path)
             page.locator = lambda selector: (SimpleNamespace(count=lambda: 0) if selector == 'main'
-                                            else SimpleNamespace(all=lambda: []))
+                                            else SimpleNamespace(
+                                                all=lambda: [],
+                                                filter=lambda **kwargs: SimpleNamespace(all=lambda: [])))
             check_protection(page)
 
 if __name__ == '__main__':

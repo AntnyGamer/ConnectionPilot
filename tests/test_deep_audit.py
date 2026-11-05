@@ -30,8 +30,10 @@ class DeepAuditTests(unittest.TestCase):
         context=MagicMock();context.__enter__.return_value=pw;context.__exit__.return_value=False
         config=dict(data_dir=self.temp.name,browser_channel='chromium',searches=['government'],match_terms=['government'],target=1,daily_limit=500,cooldown=0.1,start_hour=9,end_hour=19,filters={})
         logs=[]
-        with patch('playwright.sync_api.sync_playwright',return_value=context), patch('automation.check_protection'), patch('automation.local_now',return_value=datetime(2026,11,2,10,tzinfo=TZ)), patch('automation.collect_results') as find, patch('automation.send_one') as send:
+        with patch('playwright.sync_api.sync_playwright',return_value=context) as launcher, patch('automation.check_protection'), patch('automation.local_now',return_value=datetime(2026,11,2,10,tzinfo=TZ)), patch('automation.collect_results') as find, patch('automation.send_one') as send:
             run_campaign(self.store,config,threading.Event(),threading.Event(),logs.append,lambda:None)
+        launcher.assert_not_called()
+        page.goto.assert_not_called()
         find.assert_not_called();send.assert_not_called()
         self.assertTrue(any('Goal reached' in s for s in logs))
 

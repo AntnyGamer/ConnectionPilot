@@ -25,7 +25,7 @@ APP_DIR = Path.home() / "ConnectionPilot"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 restrict_posix_data(APP_DIR)
 STORE = Store(APP_DIR / "connectionpilot.sqlite3")
-APP_VERSION = "v1"
+APP_VERSION = "v1.0.6"
 
 
 def asset_path(name: str) -> Path:
@@ -375,6 +375,7 @@ class App:
     def pump(self):
         # Never monopolize Tk's main thread when the worker has emitted a
         # large burst of messages; quickly schedule the remaining batch.
+        needs_refresh = False
         for _ in range(MAX_UI_EVENTS_PER_TICK):
             try:
                 kind, data = self.events.get_nowait()
@@ -386,7 +387,7 @@ class App:
                 if "Next action in" not in data:
                     self.put_log(data)
             elif kind == "refresh":
-                self.refresh()
+                needs_refresh = True
             elif kind == "done":
                 self.running = False
                 self.start_btn.configure(state="normal")
@@ -396,7 +397,11 @@ class App:
                 self.pause_btn.configure(state="disabled", text="Pause")
                 self.stop_btn.configure(state="disabled")
                 self.pause_event.clear()
-                self.refresh()
+                needs_refresh = True
+        # Many worker messages can request the same counter redraw. Preserve
+        # the final current state, but read SQLite and update Tk just once.
+        if needs_refresh:
+            self.refresh()
         self.root.after(25 if not self.events.empty() else 250, self.pump)
 
     def google_signin(self):
@@ -453,10 +458,11 @@ class App:
             STORE.requeue_filtered()
             STORE.reset_search_pages(searches)
             STORE.set_setting("run:matching", matching_config)
-        for k, val in {"target": target, "daily": daily, "cooldown": cooldown,
-                       "searches": "\n".join(searches), "matches": ", ".join(matches),
-                       "filters": current_filters_json}.items():
-            STORE.set_setting("ui:" + k, val)
+        STORE.set_settings({
+            "ui:target": target, "ui:daily": daily, "ui:cooldown": cooldown,
+            "ui:searches": "\n".join(searches), "ui:matches": ", ".join(matches),
+            "ui:filters": current_filters_json,
+        })
         self.stop_event.clear()
         self.pause_event.clear()
         self.running = True

@@ -1,8 +1,8 @@
 <img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="96" />
 
-# ConnectionPilot v1 — Windows
+# ConnectionPilot v1.0.6 — Windows
 
-**Version label: v1.** This label remains v1 for future bug fixes; it is not an incrementing release number. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
+**Version: v1.0.6.** App, Windows EXE metadata and GitHub release tag use this same version. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
 
 ## Important limitations
 
@@ -45,7 +45,11 @@ Keywords separated by commas represent alternatives (OR) within one field; activ
 - The application prevents a second copy from starting against the same data folder, so two sessions cannot select and invite the same candidate simultaneously.
 - Pressing **Pause** before a sending action begins prevents that action. A second pause/stop check prevents the final confirmation click if a dialog is open; the candidate stays under **Unconfirmed**. An action that was already clicked may still finish. Stop/pause does not override LinkedIn's restrictions.
 - It halts on recognized verification, invitation-limit or restriction screens; it does not solve challenges. Normal invitation confirmation modals are handled automatically when their controls are unambiguous; unsupported relationship or email verification is skipped without asking you to click. This does not guarantee unattended operation if LinkedIn logs you out or presents a mandatory challenge.
+- Ordinary search redirects, temporary HTTP 5xx errors, and search-page navigation timeouts skip only the affected search phrase for that discovery pass, retain its page cursor, and continue to other search phrases. After a timeout, the app checks for a restriction notice before continuing. It never treats redirected feed links as search candidates. LinkedIn HTTP 403, 429 and 999 access-denial or rate-limit responses still stop the campaign rather than retrying through blocked access.
 - Search-page extraction failures do not cause a partial page to be marked as complete. Empty search pages are retried rather than assumed exhausted; pages with visible but nonmatching candidates advance to the next page.
+- A previously processed profile is ignored when it reappears in another search result; queued profiles may still be rescored. Search cards are used to reject explicit first-degree connections, excluded keywords and explicit third-degree connections when a second-degree-only filter is selected. Unknown details are verified on the actual profile, not guessed.
+- A navigation/inspection error before clicking does **not** trigger automatic reloading of the same profile. The candidate is safely skipped without recording an invitation, and you can explicitly requeue it later using **Retry safe skips**. This reduces redundant profile views, but does not make unattended automation acceptable to LinkedIn.
+- An explicit LinkedIn restriction heading halts the campaign immediately, even on a long page. This avoids continuing after a detected restriction, but is not a guarantee that all restriction layouts will be recognized.
 - The sending window, daily cap and cooldown are checked again just before the sending action, so slow page loads cannot bypass them.
 - Invitations and local statuses are saved in `%USERPROFILE%\ConnectionPilot\connectionpilot.sqlite3`. Browser session profiles are inside `%USERPROFILE%\ConnectionPilot`. **Do not share the session files**.
 
@@ -69,7 +73,7 @@ Tests use simulated LinkedIn pages, not an authenticated LinkedIn account. A pas
 - The app stops on sign-in expiration, account limits, security/verification challenges, or explicit Stop. Such service-side requirements cannot be guaranteed away; it is not possible to promise 100% successful unattended invitations.
 
 ## Reliability fixes in this v1 build
-- Temporary failures before a Connect click receive at most two additional inspections, spaced 10 seconds apart. The count persists between app restarts; uncertain invitation attempts are never retried automatically.
+- A pre-click profile inspection failure is skipped without automatically reloading the same member. **Retry safe skips** permits deliberate reinspection, while potentially sent invitations are never automatically retried.
 - Empty search pages are retried twice with a delay before discovery stops.
 - The last invitation attempt is selected by offset-aware chronological time, so clock fall-back and imported records cannot pick an older invitation.
 - A session that redirects to LinkedIn login/authwall is now recognized as a halt condition rather than continuing through other profiles.
@@ -170,13 +174,13 @@ icons for existing taskbar pins; an old pin may retain an earlier image. The
 GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
 that GitHub setting.
-The stable displayed version remains **v1**.
+The displayed version is **v1.0.6**.
 
 The repo also contains a **Windows-only** GitHub Actions build at
 [Actions](https://github.com/AntnyGamer/ConnectionPilot/actions/workflows/windows-build.yml)
 that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
 embeds the icon and version metadata, and verifies the executable. Download
-`ConnectionPilot-v1-Windows-EXE` from the successful workflow's Artifacts.
+`ConnectionPilot-v1.0.6-Windows-EXE` from the successful workflow's Artifacts.
 This is an unsigned executable and Windows SmartScreen may warn; no code
 signing certificate is bundled. The executable uses Chrome/Edge for Google
 sign-in and needs the relevant browser available on your PC.
@@ -191,10 +195,9 @@ confirmed before claiming a tested executable download exists.
 After a successful Windows build on a commit merged to `main`, GitHub Actions
 publishes the verified `ConnectionPilot.exe`, its SHA-256 checksum, and the matching PNG and ICO logo assets on the
 [latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
-Download the EXE from the release page; the desktop version always remains **v1**.
-Each release tag includes a short commit ID (`v1-build-...`) so release assets
-remain tied to their exact audited source rather than silently overwriting a
-previous release. Pull request builds run checks and produce test artifacts but
+Download the EXE from the release page; this release is **v1.0.6**.
+The release tag is `v1.0.6`, bound to the merge commit's verified source.
+The workflow refuses to replace an existing release with a different binary. Pull request builds run checks and produce test artifacts but
 **never** publish a public release. Publishing uses a write-scoped token only
 after a successful Windows test/build job.
 
