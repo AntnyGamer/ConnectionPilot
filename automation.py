@@ -449,6 +449,7 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
                 candidates.first.wait_for(state="visible", timeout=1600)
             except Exception:
                 pass
+            check_protection(page)
             visible = [c for c in candidates.all() if c.is_visible()]
             if len(visible) == 1:
                 connect = visible[0]
