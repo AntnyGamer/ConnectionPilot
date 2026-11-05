@@ -120,7 +120,9 @@ def check_protection(page):
                 continue
             opening = [line.strip() for line in warning_text.splitlines()
                        if line.strip()][:2]
-            if len(warning_text) > 800 or not any(has_stop_signal(s) for s in opening):
+            exact_notice = any(RESTRICTION_TITLE.fullmatch(s) for s in opening)
+            if not exact_notice and (
+                    len(warning_text) > 800 or not any(has_stop_signal(s) for s in opening)):
                 continue
         raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
     # Some warnings have no dialog/alert role. A short standalone notice
