@@ -77,15 +77,30 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.assertEqual(collect.call_count, 3)
             self.assertTrue(any('retry' in s.lower() for s in self.status))
 
-    def test_navigation_failure_retried_at_most_three_times(self):
+    def test_navigation_failure_is_not_revisited_automatically(self):
         url = 'https://www.linkedin.com/in/retry-person/'
         self.store.add(url, 'Retry Person', 'political science', 25)
         with patch('automation.send_one', side_effect=TimeoutError('slow page')) as send, \
              patch('automation.collect_results', side_effect=StopRun('done')):
-            self.assertEqual(self.run_fake(), 3)  # Two retries, then the normal skipped-profile throttle.
-            self.assertEqual(send.call_count, 3)
+            self.assertEqual(self.run_fake(), 1)  # Only the skipped-profile throttle.
+            self.assertEqual(send.call_count, 1)
         self.assertEqual(self.store.counts().get('skipped'), 1)
         self.assertFalse(self.store.has_attempt(url))
+        with self.store._conn() as db:
+            row = db.execute("SELECT value FROM settings WHERE key=?",
+                             ("inspect_fail:" + url,)).fetchone()
+        self.assertEqual(row[0], "1")
+
+    def test_restriction_halts_before_looking_at_next_profile(self):
+        urls = [f"https://www.linkedin.com/in/restricted-{i}/" for i in range(2)]
+        for i, url in enumerate(urls):
+            self.store.add(url, f"Restricted {i}", "policy", 25)
+        with patch('automation.send_one', side_effect=ProtectionScreen(
+                'LinkedIn reports that this account is restricted')) as send:
+            self.run_fake()
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(self.store.counts().get("queued"), 2)
+        self.assertEqual(self.store.total_attempts(), 0)
 
 
 class SessionProtectionTests(unittest.TestCase):
