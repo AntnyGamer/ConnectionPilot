@@ -176,7 +176,9 @@ class SessionProtectionTests(unittest.TestCase):
             def locator(self, selector):
                 if selector == 'main':
                     return SimpleNamespace(count=lambda: 1, first=Intro())
-                return SimpleNamespace(all=lambda: [])
+                return SimpleNamespace(
+                    all=lambda: [],
+                    filter=lambda **kwargs: SimpleNamespace(all=lambda: []))
         check_protection(Page())
 
     def test_large_main_text_filter_window_is_bounded(self):
