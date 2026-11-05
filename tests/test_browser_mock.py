@@ -214,6 +214,32 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'sent', reason)
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
 
+    def test_slow_profile_intro_retries_before_skipping(self):
+        # The profile name/actions can arrive after DOMContentLoaded.
+        document = """<html><head><title>Test Example | LinkedIn</title></head>
+          <body><main><div id='intro'><h2>Loading</h2></div></main></body></html>"""
+        class DelayedPage:
+            def __init__(self, page):
+                self.p = page
+                self.ticks = 0
+            def goto(self, *args, **kwargs):
+                self.p.set_content(document)
+            def wait_for_timeout(self, ms):
+                self.ticks += 1
+                if self.ticks == 2:
+                    self.p.locator('#intro').evaluate("""el => el.innerHTML =
+                        '<h2>Test Example</h2><button id="connect" ' +
+                        'onclick="this.textContent=\\'Pending\\'">Connect</button>'""")
+            def __getattr__(self, key):
+                return MOCK_URL if key == 'url' else getattr(self.p, key)
+        delayed = DelayedPage(self.page)
+        self.db.add(MOCK_URL, 'Test Example', 'government', 25)
+        result, reason = send_one(delayed, {'url': MOCK_URL, 'name': 'Test Example'},
+                                  self.db, lambda _: None)
+        self.assertEqual(result, 'sent', reason)
+        self.assertGreaterEqual(delayed.ticks, 2)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
     def test_message_button_does_not_prevent_connect(self):
         doc = html("""<button>Message</button><button id='connect' onclick=\"this.textContent='Pending'\">Connect</button>""")
         result, reason = self.run_mock(doc)
