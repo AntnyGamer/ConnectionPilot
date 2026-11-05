@@ -321,6 +321,10 @@ def _profile_intro(page, expected_name):
                 return current, None
             if fallback is None:
                 fallback = current
+            # Widen only for a verified More panel. A Message-only panel
+            # could sit beside another person's recommendation card.
+            if not find_first_action(current, "More") and not find_first_action(fallback, "More"):
+                return current, None
         current = current.locator('xpath=..')
     if fallback is not None:
         return fallback, None
