@@ -802,8 +802,14 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
 
     def test_unrelated_heading_about_restrictions_is_not_a_block(self):
-        doc = html("""<h3>Research into temporarily restricted online accounts</h3>
-          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        # This is an unrelated professional section outside the verified
+        # member's action panel. Identity ambiguity must stay fail-closed.
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id="connect" onclick="this.textContent='Pending'">Connect</button>
+          </section>
+          <aside><h3>Research into temporarily restricted online accounts</h3></aside>
+          </main></body></html>"""
         result, reason = self.run_mock(doc)
         self.assertEqual(result, "sent", reason)
 
