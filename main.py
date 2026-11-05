@@ -13,7 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from automation import ProtectionScreen, StopRun, run_campaign
+from automation import (MAX_AUTOMATED_PAGES_PER_DAY, ProtectionScreen,
+                        StopRun, run_campaign)
 from google_login import open_google_signin
 from logic import (FILTER_FIELDS,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
@@ -336,7 +337,9 @@ class App:
         self.stats.set(f"Attempts: {total}    Sent: {counts.get('sent', 0)}    "
                        f"Queued: {counts.get('queued', 0)}    Filtered: {counts.get('filtered', 0)}    "
                        f"Skipped: {counts.get('skipped', 0)}    Unconfirmed: {counts.get('uncertain', 0)}    "
-                       f"Today: {confirmed} confirmed / {possible} possible")
+                       f"Today: {confirmed} confirmed / {possible} possible"
+                       f"    App page loads today: "
+                       f"{STORE.automated_pages_today()}/{MAX_AUTOMATED_PAGES_PER_DAY}")
 
     def retry_skips(self):
         if self.running:
