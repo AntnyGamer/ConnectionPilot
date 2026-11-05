@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from automation import ProtectionScreen, StopRun, check_protection, collect_results, run_campaign
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, run_campaign, send_one
 from logic import TZ
 from storage import Store
 
@@ -45,6 +45,26 @@ class WorkerRecoveryTests(unittest.TestCase):
             with self.assertRaises(expected_error):
                 run_campaign(self.store, self.config, self.stop, self.pause, self.status.append, lambda: None)
             return sleeper.call_count
+
+    def test_http_access_denied_stops_search_and_profile_immediately(self):
+        from types import SimpleNamespace
+        for code in (403, 429, 999):
+            with self.subTest(code=code):
+                self.page.goto.reset_mock()
+                self.page.goto.return_value = SimpleNamespace(status=code)
+                with self.assertRaises(ProtectionScreen):
+                    collect_results(self.page, self.store,
+                                    ['political science'], ['politic'],
+                                    self.stop, self.status.append, 10)
+                self.assertEqual(self.page.goto.call_count, 1)
+                self.assertIsNone(self.store.setting('page:political science'))
+                url = 'https://www.linkedin.com/in/denied-profile/'
+                self.store.add(url, 'Denied Profile', 'politics', 25)
+                with self.assertRaises(ProtectionScreen):
+                    send_one(self.page, {'url': url, 'name': 'Denied Profile'},
+                             self.store, self.status.append)
+                self.assertFalse(self.store.has_attempt(url))
+        self.page.goto.return_value = None
 
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
