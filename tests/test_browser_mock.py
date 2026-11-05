@@ -835,6 +835,18 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.total_attempts(), 0)
         self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
 
+    def test_pasted_restriction_title_as_first_line_in_article_not_block(self):
+        doc = """<html><body><main><article>
+          <h2>Your account has been temporarily restricted</h2>
+          <p>This is an example of a warning I received.</p>
+          </article></main></body></html>"""
+        self.page.set_content(doc)
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        check_protection(SearchPage(self.page))
+
     def test_pasted_warning_in_comment_modal_does_not_count_as_site_warning(self):
         # Reading somebody's comment in a dialog must not be misread as a
         # restriction on the viewer's own account.
