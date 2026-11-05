@@ -99,8 +99,21 @@ def check_protection(page):
             inside_member_content = False  # Lightweight offline fake locator.
         if inside_member_content:
             continue
-        if has_stop_signal(surface.inner_text(timeout=3000)):
-            raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
+        warning_text = surface.inner_text(timeout=3000)
+        if not has_stop_signal(warning_text):
+            continue
+        if surface.get_attribute("role") == "dialog":
+            # Comment/article dialogs can contain another member's pasted
+            # restriction notice. Only an actual short warning prompt at the
+            # start of an otherwise non-content dialog is site-level evidence.
+            if surface.evaluate("""el => Boolean(el.querySelector(
+                'article, [role="article"], .comments-comment-item, .feed-shared-update-v2'))"""):
+                continue
+            opening = [line.strip() for line in warning_text.splitlines()
+                       if line.strip()][:2]
+            if len(warning_text) > 800 or not any(has_stop_signal(s) for s in opening):
+                continue
+        raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
     # Some warnings have no dialog/alert role. A short standalone notice
     # may be the entire main region; do not scan a full profile biography.
     main = page.locator("main")
