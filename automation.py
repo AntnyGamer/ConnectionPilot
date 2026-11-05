@@ -426,9 +426,16 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
         try:
             # Check the selected person's actual visible profile before inviting.
             # Absence of evidence causes a skip, never a guessed match.
-            visible = page.locator("main").inner_text(timeout=8000)[:12000]
-            intro = header.inner_text(timeout=5000)[:2000]
-            passed, reason = passes_profile_filters(visible, intro, filters, match_terms)
+            main_region = page.locator("main")
+            # Preserve the existing 12,000-character filter window without
+            # transferring the remainder of a potentially huge profile.
+            try:
+                visible = main_region.evaluate(
+                    "el => (el.innerText || '').slice(0, 12000)", timeout=8000)
+            except AttributeError:
+                visible = main_region.inner_text(timeout=8000)[:12000]
+            passed, reason = passes_profile_filters(
+                visible, intro_text[:2000], filters, match_terms)
             if not passed:
                 return "filtered", reason
         except Exception:
@@ -444,7 +451,11 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             # The menu can render asynchronously; do not mislabel a slow
             # Connect entry as ambiguous because a fixed delay elapsed.
             # Only accept an explicitly labeled menu item once visible.
-            candidates = page.get_by_role("menuitem", name=re.compile(r"^(?:Connect|Invite .* to connect)$", re.I))
+            menu_action = re.compile(r"^(?:Connect|Invite .* to connect)$", re.I)
+            # Some LinkedIn menus expose their option as a button rather than
+            # an ARIA menuitem. Only include buttons inside a real menu.
+            candidates = page.get_by_role("menuitem", name=menu_action).or_(
+                page.get_by_role("menu").get_by_role("button", name=menu_action))
             try:
                 candidates.first.wait_for(state="visible", timeout=1600)
             except Exception:
@@ -475,6 +486,11 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     # Loading a slow profile could otherwise allow sending beyond the cap.
     if pre_click_check is not None and not pre_click_check():
         return "deferred", "Sending conditions changed during preflight; candidate remains queued."
+    # An already-disabled or vanished control cannot initiate a request.
+    # Check before writing an attempt so a harmless no-op does not consume
+    # the user's goal, cap or cooldown.
+    if not connect.is_visible() or not connect.is_enabled():
+        return "skipped", "Connect action is unavailable; nothing clicked."
     # Persist uncertainty immediately before the first potentially sending click.
     # A page-load failure before this point leaves the person safely queued.
     store.mark(url, "uncertain", "Connect action initiated; never retry automatically.")
@@ -519,12 +535,20 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             if pre_confirm_check is not None and not pre_confirm_check():
                 return "uncertain", "Sending window or daily cap changed before final confirmation; no second click."
             action.click(timeout=7000)
-        page.wait_for_timeout(900)
-        check_protection(page)
-        # A pending button or confirmation is an indicator; site text changes can prevent verification.
-        pending = find_first_action(header, "Pending")
+        # A visible Pending state or a new confirmation needs no fixed wait.
+        # Keep the previous 900ms maximum for asynchronous UI updates.
+        pending = None
+        new_notice = False
         sent_notice = page.get_by_text(sent_pattern)
-        new_notice = not had_notice and any(node.is_visible() for node in sent_notice.all())
+        for attempt in range(4):
+            pending = find_first_action(header, "Pending")
+            new_notice = not had_notice and any(
+                node.is_visible() for node in sent_notice.all())
+            if pending or new_notice:
+                break
+            if attempt < 3:
+                page.wait_for_timeout(300)
+        check_protection(page)
         if pending or new_notice:
             return "sent", "Invitation confirmed by LinkedIn UI."
         return "uncertain", "Clicked invitation action but could not verify sending. Set aside automatically; no retry."

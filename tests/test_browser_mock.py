@@ -136,6 +136,39 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIsNone(self.page.locator('#menu-connect').get_attribute('data-clicked'))
         self.assertEqual(self.db.attempts_today(), 0)
 
+    def test_more_menu_connect_button_without_menuitem_role(self):
+        doc = html("""<button id='more' onclick="document.querySelector('#menu').hidden=false">More</button>
+            <div role='menu' id='menu' hidden><button id='menu-connect'
+            onclick="document.getElementById('more').textContent='Pending'">Connect</button></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
+    def test_delayed_more_menu_button_without_menuitem_role(self):
+        doc = html("""<button id='more' onclick="setTimeout(() =>
+            document.getElementById('menu').hidden=false, 240)">More</button>
+            <div role='menu' id='menu' hidden><button id='menu-connect'
+            onclick="document.getElementById('more').textContent='Pending'">Connect</button></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
+    def test_disabled_direct_connect_does_not_consume_an_attempt(self):
+        doc = html("""<button id='disabled' disabled
+            onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('unavailable', reason)
+        self.assertEqual(self.db.attempts_today(), 0)
+        self.assertEqual(self.page.locator('#disabled').inner_text(), 'Connect')
+
+    def test_disabled_menu_connect_does_not_consume_an_attempt(self):
+        doc = html("""<button id='more' onclick="document.getElementById('menu').hidden=false">More</button>
+            <div role='menu' id='menu' hidden><button id='disabled' disabled>Connect</button></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_other_person_connect_not_used_when_more_is_closer(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div class='layout'><div><h2>Test Example</h2>
@@ -434,6 +467,30 @@ class BrowserMockTests(unittest.TestCase):
           <button onclick="document.querySelector('#c').textContent='Pending'; document.querySelector('#d').hidden=true">Send without a note</button></div>''')
         result, _ = self.run_mock(doc)
         self.assertEqual(result, 'sent')
+
+    def test_immediate_pending_does_not_wait_fixed_900ms(self):
+        # When the request is confirmed immediately, no extra delay is needed.
+        doc = html("""<button id='connect'
+            onclick="this.textContent='Pending'">Connect</button>""")
+        class TrackingPage:
+            url = MOCK_URL
+            def __init__(self, page):
+                self.page = page
+                self.waits = []
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+            def wait_for_timeout(self, ms):
+                self.waits.append(ms)
+                self.page.wait_for_timeout(min(ms, 30))
+            def __getattr__(self, key):
+                return getattr(self.page, key)
+        target = TrackingPage(self.page)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        result, reason = send_one(
+            target, {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None)
+        self.assertEqual(result, 'sent', reason)
+        self.assertNotIn(900, target.waits)
 
     def test_generic_send_in_invitation_dialog_is_clicked_automatically(self):
         doc = html('''''''''<button id="c" onclick="document.querySelector('#d').hidden=false">Connect</button>''''''''' , '''''''''<div role="dialog" id="d" hidden><p>Send your invitation to connect</p>
