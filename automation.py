@@ -15,6 +15,12 @@ from logic import (has_stop_signal, in_work_hours, local_now, match_score,
                    clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours)
 
+# Independent of invitation caps: search/profile visits can exceed sends.
+# This is NOT a safe automation threshold; LinkedIn prohibits these tools.
+MAX_AUTOMATED_PAGES_PER_DAY = 20
+MAX_CONSECUTIVE_LAYOUT_FAILURES = 3
+
+
 class StopRun(Exception):
     pass
 
@@ -125,7 +131,8 @@ def wait_or_stop(seconds, stop_event, pause_event, status):
     raise StopRun()
 
 
-def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None, pause_event=None):
+def collect_results(page, store, searches, match_terms, stop_event, notify, target,
+                    filters=None, pause_event=None, before_navigation=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
@@ -148,6 +155,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
         notify(f"Looking at page {page_no} for: {search}")
+        if before_navigation is not None:
+            before_navigation()
         page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
         # Wait for actual search results below instead of spending 1.7 seconds
         # on every page even when the cards are already available.
@@ -391,10 +400,12 @@ def invitation_dialog_action(dialog):
 
 def send_one(page, profile, store, notify, filters=None, match_terms=None,
              stop_event=None, pause_event=None, pre_click_check=None,
-             pre_confirm_check=None):
+             pre_confirm_check=None, before_navigation=None):
     """Return sent/skipped/uncertain; never retry a potentially successful invitation."""
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
+    if before_navigation is not None:
+        before_navigation()
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
     # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
     # verified introduction, retry the safe inspection without clicking.
@@ -576,6 +587,18 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
         from playwright.sync_api import sync_playwright
     except ImportError:
         raise StopRun("Playwright not installed. Run Launch Windows.cmd to install it.")
+    def reserve_page():
+        if not store.reserve_automated_page(MAX_AUTOMATED_PAGES_PER_DAY):
+            raise StopRun(
+                f"Automated LinkedIn page-access safeguard reached "
+                f"({MAX_AUTOMATED_PAGES_PER_DAY} attempted navigations today). "
+                "Campaign stopped; this is not a LinkedIn-approved safe limit. "
+                "Do not resume automated browsing on a restricted account.")
+
+    # Stop before launching a browser when today's guardrail is already hit.
+    if store.automated_pages_today() >= MAX_AUTOMATED_PAGES_PER_DAY:
+        raise StopRun("Automated LinkedIn page-access safeguard already reached today; "
+                      "campaign stopped. This is not a LinkedIn-approved safe limit.")
     data_dir = Path(config["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
@@ -601,6 +624,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             raise
         try:
             page = browser.pages[0] if browser.pages else browser.new_page()
+            reserve_page()
             page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=45000)
             if channel in SUPPORTED:
                 # Google sign-in must happen in the NORMAL browser, not the controlled one.
@@ -632,6 +656,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             match_terms = [s.strip() for s in config["match_terms"] if s.strip()]
             filters = config.get("filters", {})
             discovery_failures = 0
+            consecutive_layout_failures = 0
             while not stop_event.is_set():
                 if pause_event.is_set():
                     wait_or_stop(2, stop_event, pause_event, notify)
@@ -662,7 +687,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                     notify("Finding new matching professionals…")
                     before_pages = [store.setting("page:" + term, "1") for term in searches]
                     new_count = collect_results(page, store, searches, match_terms, stop_event, notify,
-                                                config["target"], filters, pause_event)
+                                                config["target"], filters, pause_event, reserve_page)
                     on_update()
                     if pause_event.is_set():
                         continue
@@ -707,7 +732,8 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
 
                 try:
                     result, reason = send_one(page, profile, store, notify, filters, match_terms,
-                                              stop_event, pause_event, can_send_now, can_confirm_now)
+                                              stop_event, pause_event, can_send_now, can_confirm_now,
+                                              reserve_page)
                 except (StopRun, ProtectionScreen):
                     raise
                 except Exception as exc:
@@ -728,10 +754,25 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                         reason = "Could not inspect profile after three pre-click attempts: " + safe_diagnostic(exc, 150)
                 if result in ("paused", "deferred"):
                     continue
+                # Repeated layout misreads must not turn into hundreds of
+                # unattended profile views. Existing connections/filter skips
+                # are not evidence of a broken profile layout.
+                if result == "skipped" and reason.startswith((
+                        "Name mismatch:", "No unambiguous Connect menu action.",
+                        "No Connect option in verified profile introduction.",
+                        "Verified profile name, but couldn't locate its own action panel.",
+                        "Multiple visible Connect controls;")):
+                    consecutive_layout_failures += 1
+                else:
+                    consecutive_layout_failures = 0
                 store.mark(profile["url"], result, reason)
                 store.log(result, profile["name"] + " | " + reason)
                 on_update()
                 notify(f"{result.upper()}: {profile['name']}. {reason}")
+                if consecutive_layout_failures >= MAX_CONSECUTIVE_LAYOUT_FAILURES:
+                    raise StopRun(
+                        "Stopped after three consecutive profile layout/name-action failures "
+                        "to avoid scanning more profiles with a broken layout.")
                 if result == "uncertain":
                     # Attempt ledger and queue selection make this a permanent
                     # non-retry. Continue with a different candidate instead
