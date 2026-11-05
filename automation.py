@@ -69,7 +69,16 @@ def check_protection(page):
     # may be the entire main region; do not scan a full profile biography.
     main = page.locator("main")
     if main.count():
-        text = main.first.inner_text(timeout=3000).strip()
+        # The full main region can be enormous. Its total size matters here,
+        # not the biography itself, so transfer at most 501 characters.
+        # Simple test doubles implement inner_text without evaluate.
+        try:
+            text = main.first.evaluate("""el => {
+                const t = el.innerText || '';
+                return t.length > 500 ? t.slice(0, 500) + '…' : t;
+            }""", timeout=3000).strip()
+        except AttributeError:
+            text = main.first.inner_text(timeout=3000).strip()
         if normalize_profile(page.url) is None:
             first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
             warning = len(text) <= 500 and has_stop_signal(first_line)
@@ -432,9 +441,14 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
         more = find_first_action(header, "More")
         if more:
             more.click()
-            page.wait_for_timeout(350)
-            # Only click an explicitly labeled menuitem in the opened menu.
+            # The menu can render asynchronously; do not mislabel a slow
+            # Connect entry as ambiguous because a fixed delay elapsed.
+            # Only accept an explicitly labeled menu item once visible.
             candidates = page.get_by_role("menuitem", name=re.compile(r"^(?:Connect|Invite .* to connect)$", re.I))
+            try:
+                candidates.first.wait_for(state="visible", timeout=1600)
+            except Exception:
+                pass
             visible = [c for c in candidates.all() if c.is_visible()]
             if len(visible) == 1:
                 connect = visible[0]
