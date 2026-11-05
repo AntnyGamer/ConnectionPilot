@@ -127,6 +127,19 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#wrong').inner_text(), 'Connect')
         self.assertEqual(self.db.attempts_today(), 0)
 
+    def test_message_only_panel_does_not_capture_unrelated_connect(self):
+        # A recommendation card without a heading must not inherit the
+        # verified member's identity merely because it shares a wrapper.
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div class='layout'><div><h2>Test Example</h2>
+          <button>Message</button></div><div class='recommendation'>
+          <button id='wrong' onclick="this.textContent='Pending'">Connect</button>
+          </div></div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertEqual(self.page.locator('#wrong').inner_text(), 'Connect')
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_multiple_direct_connect_buttons_never_guess(self):
         doc = html("""<button>More</button>
           <button id='first' onclick="this.textContent='Pending'">Connect</button>
