@@ -309,7 +309,7 @@ def _profile_intro(page, expected_name):
             break
         actions = current.get_by_role("button", name=re.compile(
             r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I)).or_(
-            current.get_by_role("link", name=re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I)))
+            current.get_by_role("link", name=re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect|Pending|Remove connection)$", re.I)))
         if any(action.is_visible() for action in actions.all()):
             # Never widen the panel into a sidebar or another person's card.
             # If there was a verified smaller panel, its More action is still
@@ -351,7 +351,7 @@ def find_first_action(intro, name):
     pattern = (re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I) if name == "Connect"
                else re.compile(r"^" + re.escape(name) + (r"(?: actions)?$" if name == "More" else r"$"), re.I))
     buttons = intro.get_by_role("button", name=pattern)
-    if name == "Connect":
+    if name in ("Connect", "Pending", "Remove connection"):
         buttons = buttons.or_(intro.get_by_role("link", name=pattern))
     matches = [button for button in buttons.all() if button.is_visible()]
     return matches[0] if len(matches) == 1 else None
