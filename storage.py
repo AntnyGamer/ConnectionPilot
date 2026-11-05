@@ -74,6 +74,18 @@ class Store:
                        (score, headline[:500], url, score))
             return False
 
+    def processed_urls(self):
+        """Previously completed people should not be read from search cards again.
+
+        Queued candidates can still receive higher relevance scores when they
+        appear in a later search. An invitation attempt always takes priority
+        over a stale queued status.
+        """
+        with self._conn() as db:
+            rows = db.execute("""SELECT url FROM profiles WHERE status != 'queued'
+                OR EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""")
+            return {row[0] for row in rows}
+
     def has_attempt(self, url):
         with self._conn() as db:
             return db.execute("SELECT 1 FROM attempts WHERE url=?", (url,)).fetchone() is not None
