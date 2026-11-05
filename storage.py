@@ -167,7 +167,11 @@ class Store:
 
     def set_setting(self, key, value):
         with self._conn() as db:
-            db.execute("INSERT INTO settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+            # A repeated save with an unchanged value should not rewrite a
+            # SQLite row (and its journal). The stored value is identical.
+            db.execute("""INSERT INTO settings VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                WHERE settings.value IS NOT excluded.value""", (key, str(value)))
 
     def log(self, event, detail=""):
         with self._conn() as db:
