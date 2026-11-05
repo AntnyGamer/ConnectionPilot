@@ -73,15 +73,15 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.run_fake()
 
     def test_search_collection_checks_only_queued_count_not_all_statuses(self):
-        from unittest.mock import patch as mock_patch
-        from types import SimpleNamespace
-
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, name): return "/in/government-worker/"
+            def inner_text(self, **kwargs): return "Government Worker"
+            def evaluate(self, expression):
+                return "Government Worker, public policy analyst in New Jersey"
         class Anchors:
-            def count(self): return 0
-            @property
-            def first(self):
-                return self
-            def wait_for(self, **kwargs): raise TimeoutError("no profile cards")
+            def count(self): return 1
+            def nth(self, index): return Anchor()
         class Page:
             url = "https://www.linkedin.com/search/results/people/"
             def goto(self, *args, **kwargs): return SimpleNamespace(status=200)
@@ -90,13 +90,19 @@ class WorkerRecoveryTests(unittest.TestCase):
                     return Anchors()
                 return SimpleNamespace(all=lambda: [], count=lambda: 0)
 
-        # Empty result pages should not even need a status breakdown.
-        with mock_patch("automation.check_protection"):
-            with mock_patch.object(self.store, "counts",
-                                   side_effect=AssertionError("Unexpected GROUP BY")):
-                self.assertEqual(collect_results(
-                    Page(), self.store, ["policy"], ["policy"],
-                    self.stop, self.status.append, 20), 0)
+        # Exercise the successful discovery path, including the queue
+        # threshold check. A full status GROUP BY would fail this test.
+        with patch("automation.check_protection"), \
+             patch.object(self.store, "counts",
+                          side_effect=AssertionError("Unexpected GROUP BY")), \
+             patch.object(self.store, "queued_count",
+                          wraps=self.store.queued_count) as queued:
+            added = collect_results(
+                Page(), self.store, ["policy"], ["policy"],
+                self.stop, self.status.append, 20)
+        self.assertEqual(added, 1)
+        queued.assert_called_once()
+        self.assertEqual(self.store.counts().get("queued"), 1)
 
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
