@@ -32,6 +32,8 @@ The source ZIP is Python source, not a compiled `.exe`. The first source-based l
 | Sending window | 9 AM–7 PM Eastern | Fixed |
 | Advanced filters | Minimum relevance score 25 | Location, role, organization, school, sector, exclusions, degree and score |
 
+Search phrases and relevant profile terms are **empty on a first installation**. Once a campaign has been started, its saved phrases and terms reappear when the app is relaunched; installing a newer EXE does not clear them. Use **Clear campaign data** only if you intend to erase the local invitation history, which can allow previous recipients to be approached again.
+
 Keywords separated by commas represent alternatives (OR) within one field; active fields must all match (AND). Matching uses visible profile text, not validated LinkedIn metadata. A search may miss qualified people or include irrelevant ones. LinkedIn's built-in filters may be more accurate. The program will not invent acquaintances or emails to bypass relationship verification.
 
 ## Safety and data integrity
