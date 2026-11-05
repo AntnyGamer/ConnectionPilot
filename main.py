@@ -25,33 +25,7 @@ APP_DIR = Path.home() / "ConnectionPilot"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 restrict_posix_data(APP_DIR)
 STORE = Store(APP_DIR / "connectionpilot.sqlite3")
-# New profile layouts made the old pre-click header check skip valid people.
-# Retry ONLY those safe, confirmed-not-clicked cases, once per upgrade.
-if STORE.setting("migration:layout_v8") != "1":
-    STORE.requeue_layout_skips()
-    STORE.set_setting("migration:layout_v8", "1")
-# Menu-only misdetection also left safe, unclicked leads in skipped state.
-# Revisit these once after installing the corrected direct-Connect lookup.
-if STORE.setting("migration:layout_v9") != "1":
-    STORE.requeue_layout_skips()
-    STORE.set_setting("migration:layout_v9", "1")
-# Migrate the original prototype's 8/day default; retain other custom caps.
-if STORE.setting("ui:settings_version") != "2":
-    if STORE.setting("ui:daily") == "8":
-        STORE.set_setting("ui:daily", "500")
-    STORE.set_setting("ui:settings_version", "2")
-# Older builds stored integer minutes; migrate once without accelerating campaigns.
-# New installations start at 90 seconds, and old saved intervals keep their duration.
-if STORE.setting("ui:cooldown_unit") != "seconds":
-    previous = STORE.setting("ui:cooldown")
-    if previous is not None:
-        try:
-            STORE.set_setting("ui:cooldown", str(float(previous) * 60))
-        except ValueError:
-            pass
-    STORE.set_setting("ui:cooldown_unit", "seconds")
-
-APP_VERSION = "v1"  # Stable user-visible label; internal migrations retain their own keys.
+APP_VERSION = "v1"
 
 
 def asset_path(name: str) -> Path:
