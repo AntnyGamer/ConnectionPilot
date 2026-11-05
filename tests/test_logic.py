@@ -180,6 +180,26 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.setting('term'), 'New Jersey')
         self.db.log('example','OK')
         self.assertEqual(self.db.history()[0][1], 'example')
+    def test_identical_setting_save_does_not_write_a_second_time(self):
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE setting_writes(value TEXT)")
+            conn.execute("""CREATE TRIGGER record_setting_update AFTER UPDATE
+                ON settings BEGIN
+                    INSERT INTO setting_writes(value) VALUES(NEW.value);
+                END""")
+        self.db.set_setting("ui:searches", "policy")
+        self.db.set_setting("ui:searches", "policy")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM setting_writes").fetchone()[0], 0)
+        self.db.set_setting("ui:searches", "government")
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT value FROM setting_writes").fetchone()[0], "government")
+            self.assertEqual(conn.execute(
+                "SELECT count(*) FROM setting_writes").fetchone()[0], 1)
+        self.assertEqual(self.db.setting("ui:searches"), "government")
+
     def test_filters_can_be_reconsidered(self):
         a = 'https://www.linkedin.com/in/profile-filtered/'
         self.db.add(a, 'Profile', 'public policy', 25)
