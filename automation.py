@@ -133,12 +133,23 @@ def wait_or_stop(seconds, stop_event, pause_event, status):
     raise StopRun()
 
 
+def reject_denied_page(response):
+    """A denied/rate-limited navigation is not a retryable search result."""
+    code = getattr(response, "status", None)
+    if code in (403, 429, 999):
+        raise ProtectionScreen(
+            f"LinkedIn denied or limited page access (HTTP {code}); stop automated access")
+
+
 def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None, pause_event=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
     minimum_score = (filters or {}).get("min_score", 1)
     exclusions = None
+    # Terminal candidates cannot change during discovery. Load them once
+    # rather than querying all completed profiles per search phrase.
+    processed = store.processed_urls()
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
@@ -156,12 +167,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
         notify(f"Looking at page {page_no} for: {search}")
-        page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
-        # Wait for actual search results below instead of spending 1.7 seconds
-        # on every page even when the cards are already available.
+        response = page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
+        reject_denied_page(response)
+        # Verify the destination before parsing cards. A redirect to the feed
+        # or another LinkedIn page can expose unrelated profile links.
         check_protection(page)
-        if "/login" in page.url.lower() or "/authwall" in page.url.lower():
-            raise StopRun("LinkedIn has logged you out; sign in and restart.")
+        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
+            raise StopRun("LinkedIn redirected away from People search; "
+                          "stopped rather than reading unrelated profile links.")
         # Profile links inside visible main-content search results.
         anchors = page.locator('main a[href*="/in/"]')
         # A slow-loading result list is not proof that the search is exhausted.
@@ -179,9 +192,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # Result hydration may have changed the page since the first check.
         check_protection(page)
         seen_this_page = set()
-        # One query per search page, rather than re-reading DOM cards and
-        # biographies for profiles already handled in prior campaigns.
-        processed = store.processed_urls()
+        # Skip already processed people without extracting their card content.
         valid_profile_links = set()
         named_profile_links = set()
         extraction_errors = 0
@@ -425,7 +436,8 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     """Return sent/skipped/uncertain; never retry a potentially successful invitation."""
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
-    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    reject_denied_page(response)
     # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
     # verified introduction, retry the safe inspection without clicking.
     check_protection(page)
