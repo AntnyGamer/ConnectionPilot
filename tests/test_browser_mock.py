@@ -100,7 +100,7 @@ class BrowserMockTests(unittest.TestCase):
           <body><main><section><div><h2>Test Example</h2><button id='more'
           onclick="this.dataset.clicked='yes'">More</button></div>
           <div><button id='connect' aria-label='Connect with Test Example'
-          onclick="this.textContent='Pending'">Connect</button></div>
+          onclick="this.setAttribute('aria-label','Pending'); this.textContent='Pending'">Connect</button></div>
           </section></main></body></html>"""
         result, reason = self.run_mock(doc)
         self.assertEqual(result, 'sent', reason)
