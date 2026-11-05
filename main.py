@@ -197,7 +197,10 @@ class App:
         self.stop_btn.pack(side="left")
 
         self.stats = tk.StringVar(value="Loading progress…")
-        ttk.Label(panel, textvariable=self.stats, style="Card.TLabel").pack(anchor="w", pady=(6, 7))
+        ttk.Label(panel, textvariable=self.stats, style="Card.TLabel").pack(anchor="w", pady=(6, 3))
+        self.page_stats = tk.StringVar()
+        ttk.Label(panel, textvariable=self.page_stats, style="Muted.TLabel").pack(
+            anchor="w", pady=(0, 7))
         progress_actions = ttk.Frame(panel, style="Card.TFrame")
         progress_actions.pack(fill="x", pady=(0, 7))
         self.retry_btn = ttk.Button(progress_actions, text="Retry safe skips",
@@ -337,9 +340,11 @@ class App:
         self.stats.set(f"Attempts: {total}    Sent: {counts.get('sent', 0)}    "
                        f"Queued: {counts.get('queued', 0)}    Filtered: {counts.get('filtered', 0)}    "
                        f"Skipped: {counts.get('skipped', 0)}    Unconfirmed: {counts.get('uncertain', 0)}    "
-                       f"Today: {confirmed} confirmed / {possible} possible"
-                       f"    App page loads today: "
-                       f"{STORE.automated_pages_today()}/{MAX_AUTOMATED_PAGES_PER_DAY}")
+                       f"Today: {confirmed} confirmed / {possible} possible")
+        self.page_stats.set(
+            f"Automated LinkedIn page loads today: "
+            f"{STORE.automated_pages_today()}/{MAX_AUTOMATED_PAGES_PER_DAY} "
+            "(app safeguard, not an approved LinkedIn limit)")
 
     def retry_skips(self):
         if self.running:
