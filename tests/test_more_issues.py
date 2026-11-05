@@ -181,7 +181,7 @@ class QueueTests(unittest.TestCase):
                                 threading.Event(), messages.append, 20, {'min_score':25})
         self.assertEqual(added, 0)
         self.assertEqual(self.store.setting('page:government', '1'), '1')
-        self.assertIn('no member names', ' '.join(messages))
+        self.assertIn('lack identifiable names', ' '.join(messages))
 
 
 
