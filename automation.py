@@ -57,7 +57,7 @@ def check_protection(page):
     # Locate only headings whose complete text matches the restriction notice.
     # Filtering in the browser avoids reading every profile heading and, unlike
     # the old first-20 cutoff, cannot miss a warning later in the page.
-    restricted = page.locator('h1, h2, h3, [role="heading"]').filter(
+    restricted = page.locator('h1, h2, h3, h4, h5, h6, [role="heading"]').filter(
         has_text=re.compile(r"^\s*Your account has been (?:temporarily )?restricted\s*$", re.I))
     if any(h.is_visible() for h in restricted.all()):
         raise ProtectionScreen(
@@ -308,13 +308,19 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # Keep this page pending: already collected leads are deduplicated
             # and the rest can be inspected safely after Resume.
             return added
+        # A readable new member on a mixed results page must not obscure a
+        # different, unnamed new member. Multiple links to a single person
+        # are fine once any one link supplies that person's actual name.
+        unnamed_new_links = valid_profile_links - processed - named_profile_links
         if extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
+        elif unnamed_new_links:
+            notify(f"{len(unnamed_new_links)} new profile link(s) on page {page_no} "
+                   "lack identifiable names; retaining the page rather than dropping them.")
         elif named_profile_links or (valid_profile_links and valid_profile_links.issubset(processed)):
-            # Advance when we identified at least one new member by name, or
-            # when every valid profile link was already processed. Do not let
-            # a completed person's generic link conceal an unread new person.
+            # Every nonprocessed profile link was identifiable, or the page
+            # consisted entirely of previously completed people.
             store.set_setting(key, page_no + 1)
         elif valid_profile_links:
             notify(f"Profile URLs appeared for '{search}', but no member names could be read; "
