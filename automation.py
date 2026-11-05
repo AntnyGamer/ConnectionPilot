@@ -714,6 +714,18 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
 
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
     """Run in a background thread. One click launches one visible browser session."""
+    if stop_event.is_set():
+        raise StopRun()
+    # A completed goal needs no LinkedIn session or feed page view. Check
+    # the immutable click ledger locally before launching any browser.
+    attempted = store.total_attempts()
+    if attempted >= config["target"]:
+        counts = store.counts()
+        notify(f"Goal reached: {attempted} total invitation attempt(s), including "
+               f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
+               "unconfirmed. Some clicks may have been rejected by LinkedIn.")
+        on_update()
+        return
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
