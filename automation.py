@@ -54,14 +54,14 @@ def check_protection(page):
     if any(path == prefix or path.startswith(prefix + "/") for prefix in
            ("/login", "/authwall", "/checkpoint", "/challenge", "/uas", "/login-submit")):
         raise ProtectionScreen("LinkedIn displayed a sign-in, checkpoint or verification page")
-    # A restriction page can have a long explanation. Match its standalone
-    # warning heading, not the member's bio text or a generic keyword.
-    for heading in page.locator('h1, h2, [role="heading"]').all()[:20]:
-        if heading.is_visible() and re.fullmatch(
-                r"Your account has been (?:temporarily )?restricted",
-                heading.inner_text(timeout=2000).strip(), re.I):
-            raise ProtectionScreen(
-                "LinkedIn reports that this account is restricted; stop automated access")
+    # Locate only headings whose complete text matches the restriction notice.
+    # Filtering in the browser avoids reading every profile heading and, unlike
+    # the old first-20 cutoff, cannot miss a warning later in the page.
+    restricted = page.locator('h1, h2, h3, [role="heading"]').filter(
+        has_text=re.compile(r"^\s*Your account has been (?:temporarily )?restricted\s*$", re.I))
+    if any(h.is_visible() for h in restricted.all()):
+        raise ProtectionScreen(
+            "LinkedIn reports that this account is restricted; stop automated access")
     # A member's biography, activity, or job history can legitimately mention
     # "unusual activity", "captcha", or "security verification". Only treat
     # visible site-warning surfaces as account restrictions, not all page text.
