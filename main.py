@@ -30,6 +30,11 @@ STORE = Store(APP_DIR / "connectionpilot.sqlite3")
 if STORE.setting("migration:layout_v8") != "1":
     STORE.requeue_layout_skips()
     STORE.set_setting("migration:layout_v8", "1")
+# Menu-only misdetection also left safe, unclicked leads in skipped state.
+# Revisit these once after installing the corrected direct-Connect lookup.
+if STORE.setting("migration:layout_v9") != "1":
+    STORE.requeue_layout_skips()
+    STORE.set_setting("migration:layout_v9", "1")
 # Migrate the original prototype's 8/day default; retain other custom caps.
 if STORE.setting("ui:settings_version") != "2":
     if STORE.setting("ui:daily") == "8":
