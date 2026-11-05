@@ -246,11 +246,22 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # A plain "1st" in unrelated profile text is not sufficient.
                 # Search UI changes frequently. Use nearest card with enough text.
                 snippet = anchor.evaluate("""el => {
-                  let n=el; for(let j=0;j<6 && n;j++, n=n.parentElement){
-                    const t=(n.innerText||'').trim();
-                    if(t.length>=60 && t.length<1200) return t;
+                  // Do not drop short-but-useful descriptions; never borrow
+                  // search text from a different person's profile card.
+                  const key = a => {
+                    const p = (a.pathname || '').toLowerCase();
+                    return p.endsWith('/') ? p.slice(0, -1) : p;
+                  };
+                  const own = key(el);
+                  let best = (el.innerText || '').trim();
+                  for (let n = el.parentElement, j = 0; n && j < 6;
+                       n = n.parentElement, j++) {
+                    const people = n.querySelectorAll('a[href*="/in/"]');
+                    if (Array.from(people).some(a => key(a) !== own)) break;
+                    const t = (n.innerText || '').trim();
+                    if (t.length > best.length && t.length < 1200) best = t;
                   }
-                  return (el.innerText||'').trim();
+                  return best;
                 }""") or ""
                 if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
                     continue
