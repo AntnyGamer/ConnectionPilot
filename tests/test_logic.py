@@ -192,6 +192,20 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(row[0], 'filtered')
         self.assertTrue(self.db.has_attempt(attempted))
 
+    def test_dashboard_snapshot_matches_individual_counters(self):
+        a = 'https://www.linkedin.com/in/dashboard-a/'
+        b = 'https://www.linkedin.com/in/dashboard-b/'
+        self.db.add(a, 'Dashboard A', 'policy', 25)
+        self.db.add(b, 'Dashboard B', 'government', 50)
+        self.db.mark(a, 'uncertain', 'Possible click')
+        self.assertEqual(self.db.dashboard_stats(),
+                         (self.db.counts(), self.db.total_attempts(),
+                          self.db.sent_today(), self.db.attempts_today()))
+        self.db.mark(a, 'sent', 'Confirmed')
+        self.assertEqual(self.db.dashboard_stats(),
+                         (self.db.counts(), self.db.total_attempts(),
+                          self.db.sent_today(), self.db.attempts_today()))
+
     def test_uncertain_attempt_counts_toward_daily_cap_and_cooldown(self):
         a='https://www.linkedin.com/in/alice/'
         b='https://www.linkedin.com/in/bob/'
