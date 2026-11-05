@@ -375,6 +375,7 @@ class App:
     def pump(self):
         # Never monopolize Tk's main thread when the worker has emitted a
         # large burst of messages; quickly schedule the remaining batch.
+        needs_refresh = False
         for _ in range(MAX_UI_EVENTS_PER_TICK):
             try:
                 kind, data = self.events.get_nowait()
@@ -386,7 +387,7 @@ class App:
                 if "Next action in" not in data:
                     self.put_log(data)
             elif kind == "refresh":
-                self.refresh()
+                needs_refresh = True
             elif kind == "done":
                 self.running = False
                 self.start_btn.configure(state="normal")
@@ -396,7 +397,11 @@ class App:
                 self.pause_btn.configure(state="disabled", text="Pause")
                 self.stop_btn.configure(state="disabled")
                 self.pause_event.clear()
-                self.refresh()
+                needs_refresh = True
+        # Many worker messages can request the same counter redraw. Preserve
+        # the final current state, but read SQLite and update Tk just once.
+        if needs_refresh:
+            self.refresh()
         self.root.after(25 if not self.events.empty() else 250, self.pump)
 
     def google_signin(self):
