@@ -140,7 +140,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
         notify(f"Looking at page {page_no} for: {search}")
         page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(1700)
+        # Wait for actual search results below instead of spending 1.7 seconds
+        # on every page even when the cards are already available.
         check_protection(page)
         if "/login" in page.url.lower() or "/authwall" in page.url.lower():
             raise StopRun("LinkedIn has logged you out; sign in and restart.")
@@ -379,7 +380,8 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(1250)
+    # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
+    # verified introduction, retry the safe inspection without clicking.
     check_protection(page)
     if "/login" in page.url.lower() or "/authwall" in page.url.lower():
         raise StopRun("Please sign in again in the browser before restarting.")
@@ -389,6 +391,15 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     if normalize_profile(page.url) != url:
         return "skipped", "Opened URL does not match the discovered profile; nothing clicked."
     header, error = _profile_intro(page, profile["name"])
+    if header is None and not error.startswith("Name mismatch: page title"):
+        for _ in range(5):
+            page.wait_for_timeout(400)
+            check_protection(page)
+            if normalize_profile(page.url) != url:
+                return "skipped", "Profile navigated during introduction loading; nothing clicked."
+            header, error = _profile_intro(page, profile["name"])
+            if header is not None:
+                break
     if header is None:
         return "skipped", error
     # Check relationship before applying interest filters. Existing
