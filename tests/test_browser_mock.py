@@ -685,6 +685,54 @@ class BrowserMockTests(unittest.TestCase):
                          'https://www.linkedin.com/in/real-member/')
         self.assertIn('redirected', ' '.join(messages))
 
+    def test_search_timeout_keeps_cursor_and_tries_other_searches(self):
+        doc = """<main><div><a href='/in/second-search-member/'>Second Search Member</a>
+          <p>Government public policy analyst in New Jersey</p></div></main>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = []
+            def goto(self, url, **kwargs):
+                self.visits.append(url)
+                if 'keywords=policy' in url:
+                    raise TimeoutError("Simulated search navigation timeout")
+                self.browser.set_content(doc)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        page = SearchPage(self.page)
+        messages = []
+        added = collect_results(page, self.db, ['policy', 'government'], ['policy'],
+                                threading.Event(), messages.append, 100)
+        self.assertEqual(added, 1)
+        self.assertEqual(len(page.visits), 2)
+        self.assertEqual(self.db.setting("page:policy", "1"), "1")
+        self.assertEqual(self.db.setting("page:government"), "2")
+        self.assertIn("timed out", " ".join(messages))
+        self.assertEqual(self.db.next_profile()["url"],
+                         "https://www.linkedin.com/in/second-search-member/")
+
+    def test_timeout_showing_account_restriction_does_not_continue(self):
+        doc = "<main><h2>Your account has been temporarily restricted</h2></main>"
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = 0
+            def goto(self, url, **kwargs):
+                self.visits += 1
+                self.browser.set_content(doc)
+                raise TimeoutError("Timed out after restriction appeared")
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        page = SearchPage(self.page)
+        with self.assertRaises(ProtectionScreen):
+            collect_results(page, self.db, ['policy', 'government'], ['policy'],
+                            threading.Event(), lambda _: None, 100)
+        self.assertEqual(page.visits, 1)
+        self.assertIsNone(self.db.setting("page:policy"))
+        self.assertIsNone(self.db.next_profile())
+
     def test_search_server_error_skips_phrase_without_stopping_campaign(self):
         from types import SimpleNamespace
         class ServerErrorPage:
