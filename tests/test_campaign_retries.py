@@ -56,6 +56,26 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.assertFalse(settings.kwargs['headless'])
         self.assertNotIn('--no-sandbox', settings.kwargs.get('args', []))
 
+    def test_existing_navigation_budget_blocks_browser_launch(self):
+        from automation import MAX_AUTOMATED_PAGES_PER_DAY
+        for _ in range(MAX_AUTOMATED_PAGES_PER_DAY):
+            self.assertTrue(self.store.reserve_automated_page(MAX_AUTOMATED_PAGES_PER_DAY))
+        self.run_fake()
+        self.assertFalse(self.context.chromium.launch_persistent_context.called)
+        self.assertFalse(self.page.goto.called)
+
+    def test_three_consecutive_layout_failures_stop_scanning(self):
+        from automation import MAX_CONSECUTIVE_LAYOUT_FAILURES
+        for i in range(4):
+            self.store.add(f'https://www.linkedin.com/in/layout-{i}/',
+                           f'Layout {i}', 'policy', 25)
+        with patch('automation.send_one', return_value=(
+                'skipped', 'No unambiguous Connect menu action.')) as send:
+            self.run_fake()
+        self.assertEqual(send.call_count, MAX_CONSECUTIVE_LAYOUT_FAILURES)
+        self.assertEqual(self.store.counts().get('skipped'), MAX_CONSECUTIVE_LAYOUT_FAILURES)
+        self.assertEqual(self.store.counts().get('queued'), 1)
+
     def test_invalid_search_page_restarts_at_first_page(self):
         self.page.wait_for_timeout = MagicMock()
         anchors = MagicMock()
