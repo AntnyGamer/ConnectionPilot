@@ -89,7 +89,7 @@ class WorkerRecoveryTests(unittest.TestCase):
         with self.store._conn() as db:
             row = db.execute("SELECT value FROM settings WHERE key=?",
                              ("inspect_fail:" + url,)).fetchone()
-        self.assertEqual(row[0], "1")
+        self.assertIsNone(row)  # No redundant per-person failure bookkeeping.
 
     def test_restriction_halts_before_looking_at_next_profile(self):
         urls = [f"https://www.linkedin.com/in/restricted-{i}/" for i in range(2)]
