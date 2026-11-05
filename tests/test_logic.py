@@ -67,6 +67,16 @@ class LogicTests(unittest.TestCase):
         self.assertTrue(names_match("李 小龙", "李 小龙"))
         self.assertFalse(names_match("李 小龙", "王 小龙"))
 
+    def test_professional_suffixes_and_middle_initials_match_safely(self):
+        self.assertTrue(names_match("Sarah E Jones, Esq.", "Sarah E. Jones"))
+        self.assertTrue(names_match("Sarah E. Jones, Esq. · 2nd", "Sarah Elizabeth Jones"))
+        self.assertTrue(names_match("Dr. Sarah E Jones, J.D.", "Sarah E Jones"))
+        self.assertTrue(names_match("Sarah E Jones Ph.D.", "Sarah E Jones"))
+        self.assertFalse(names_match("Sarah E Jones, Esq.", "Sarah A Jones"))
+        self.assertFalse(names_match("Sarah E Jones", "Sarah Jones"))
+        self.assertFalse(names_match("John Smith Jr.", "John Smith Sr."))
+        self.assertFalse(names_match("Sarah E Jones (Former)", "Sarah E Jones"))
+
     def test_name_validation(self):
         self.assertTrue(names_match('José de la Cruz', 'Jose de la Cruz'))
         self.assertFalse(names_match('Jane Public', 'John Public'))
