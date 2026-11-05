@@ -209,6 +209,7 @@ class StorageTests(unittest.TestCase):
             'menu': "No unambiguous Connect menu action.",
             'no-control': "No Connect option in verified profile introduction.",
             'disabled': "Connect action is unavailable; nothing clicked.",
+            'inspection': "Profile inspection failed before any click; no automatic reinspection: timeout",
         }
         for slug, reason in cases.items():
             url = base + slug + '/'
