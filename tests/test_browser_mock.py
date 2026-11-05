@@ -636,6 +636,24 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIsNone(self.db.next_profile())
         self.assertEqual(self.db.setting('page:government'), '2')
 
+    def test_short_search_card_text_is_not_lost_or_mixed_with_neighbor(self):
+        doc = """<html><body><main>
+            <div><a href='/in/policy-person/'>Policy Person</a><p>Policy adviser.</p></div>
+            <div><a href='/in/chef-person/'>Chef Person</a><p>Restaurant chef.</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser): self.browser = browser
+            def goto(self, *args, **kwargs): self.browser.set_content(doc)
+            def __getattr__(self, name): return getattr(self.browser, name)
+        count = collect_results(SearchPage(self.page), self.db, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 100,
+                                {'min_score': 25})
+        self.assertEqual(count, 1)
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/policy-person/')
+        self.assertEqual(self.db.counts().get('queued'), 1)
+
     def test_search_redirect_skips_only_that_phrase_and_continues(self):
         doc = """<main><a href='/in/unrelated-person/'>Unrelated Person</a>
             <p>Government policy analyst</p></main>"""
