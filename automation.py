@@ -171,8 +171,13 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 anchors.first.wait_for(state="attached", timeout=6000)
                 anchor_count = anchors.count()
             except Exception:
+                # A late restriction notice may replace the search results.
+                # Never refresh another LinkedIn page before checking again.
+                check_protection(page)
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
+        # Result hydration may have changed the page since the first check.
+        check_protection(page)
         seen_this_page = set()
         # One query per search page, rather than re-reading DOM cards and
         # biographies for profiles already handled in prior campaigns.
@@ -746,7 +751,6 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                         # A slow page or an unrecognized layout is not a reason
                         # to reload the same person's data multiple times.
                         # Preserve the unattempted status and continue once.
-                        store.record_inspection_failure(profile["url"])
                         result = "skipped"
                         reason = "Profile inspection failed before any click; no automatic reinspection: " + safe_diagnostic(exc, 150)
                 if result in ("paused", "deferred"):
