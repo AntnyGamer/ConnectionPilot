@@ -110,16 +110,19 @@ class Store:
             # happens. Later confirmations or skips update the result without
             # changing the immutable initiation timestamp.
             if status in ("uncertain", "sent"):
-                inserted = db.execute(
-                    "INSERT OR IGNORE INTO attempts(url, initiated_at, result) VALUES (?,?,?)",
+                # Record the first potentially sending click before it occurs.
+                # An existing attempt retains its original initiation time.
+                # One UPSERT handles insertion and subsequent confirmations.
+                db.execute("""INSERT INTO attempts(url, initiated_at, result)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(url) DO UPDATE SET result=excluded.result
+                    WHERE attempts.result IS NOT excluded.result""",
                     (url, now, status))
-                if inserted.rowcount:
-                    # The initial INSERT already recorded the correct result.
-                    # Do not UPDATE the new row to the same value again.
-                    return
-            # This still updates existing attempts after confirmation or
-            # a later skipped/filtered state, preserving the original timestamp.
-            db.execute("UPDATE attempts SET result=? WHERE url=?", (status, url))
+            else:
+                # A later non-sending status must not erase the immutable
+                # attempt ledger or cause a redundant same-value write.
+                db.execute("""UPDATE attempts SET result=?
+                    WHERE url=? AND result IS NOT ?""", (status, url, status))
 
     def reset_search_pages(self, searches):
         """Restart discovery when relevant keywords or filters change."""
@@ -173,12 +176,15 @@ class Store:
             return row[0] if row else default
 
     def set_setting(self, key, value):
+        self.set_settings({key: value})
+
+    def set_settings(self, values):
+        """Save preferences in one atomic transaction, skipping unchanged rows."""
         with self._conn() as db:
-            # A repeated save with an unchanged value should not rewrite a
-            # SQLite row (and its journal). The stored value is identical.
-            db.execute("""INSERT INTO settings VALUES (?, ?)
+            db.executemany("""INSERT INTO settings VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                WHERE settings.value IS NOT excluded.value""", (key, str(value)))
+                WHERE settings.value IS NOT excluded.value""",
+                ((key, str(value)) for key, value in values.items()))
 
     def log(self, event, detail=""):
         with self._conn() as db:
@@ -214,6 +220,12 @@ class Store:
         with self._conn() as db:
             rows = db.execute("SELECT status,count(*) n FROM profiles GROUP BY status").fetchall()
             return {row[0]: row[1] for row in rows}
+
+    def queued_count(self):
+        """Use the existing queued-only index instead of grouping all states."""
+        with self._conn() as db:
+            return db.execute(
+                "SELECT count(*) FROM profiles WHERE status='queued'").fetchone()[0]
 
     def dashboard_stats(self):
         """Read dashboard counters together from one consistent SQLite snapshot."""
