@@ -147,6 +147,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     added = 0
     minimum_score = (filters or {}).get("min_score", 1)
     exclusions = None
+    # Only navigation timeouts are recoverable here; unexpected browser
+    # errors and LinkedIn protection screens must propagate normally.
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     # Terminal candidates cannot change during discovery. Load them once
     # rather than querying all completed profiles per search phrase.
     processed = store.processed_urls()
@@ -167,7 +170,15 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
         notify(f"Looking at page {page_no} for: {search}")
-        response = page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
+        try:
+            response = page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
+        except (PlaywrightTimeoutError, TimeoutError):
+            # Loading may have finished enough to display an account block.
+            # Never retry a timeout until protection is checked first.
+            check_protection(page)
+            notify(f"Search page {page_no} for '{search}' timed out; "
+                   "keeping its cursor and trying other searches.")
+            continue
         reject_denied_page(response)
         # An ordinary redirect or temporary server error is not evidence of
         # account restriction. Skip only this search page and retain its cursor,
