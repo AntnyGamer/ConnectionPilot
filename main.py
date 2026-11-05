@@ -64,6 +64,15 @@ COLORS = {
     "accent": "#1867bd", "alert": "#9b391b", "line": "#d6e0ec",
 }
 
+MAX_UI_LOG_LINES = 1000
+MAX_UI_EVENTS_PER_TICK = 100
+
+
+def initial_search_inputs(store):
+    """Keep existing users' saved terms; leave fresh installations blank."""
+    return store.setting("ui:searches", ""), store.setting("ui:matches", "")
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -146,13 +155,14 @@ class App:
         self.search_box = tk.Text(panel, height=5, bg="#fbfdff", fg=COLORS["ink"],
                                   font=("Segoe UI", 9), relief="solid", bd=1, wrap="word")
         self.search_box.pack(fill="x", pady=(4, 10))
-        # Start empty on every launch, even with an existing user data folder.
+        saved_searches, saved_matches = initial_search_inputs(STORE)
+        self.search_box.insert("1.0", saved_searches)
 
         ttk.Label(panel, text="Relevant profile terms (comma-separated)", style="Card.TLabel").pack(anchor="w")
         self.match_box = tk.Text(panel, height=2, bg="#fbfdff", fg=COLORS["ink"],
                                  font=("Segoe UI", 9), relief="solid", bd=1, wrap="word")
         self.match_box.pack(fill="x", pady=(4, 8))
-        # Never automatically fill in saved terms or built-in suggested terms.
+        self.match_box.insert("1.0", saved_matches)
 
         self.filters = self.load_filters()
         filter_row = ttk.Frame(panel, style="Card.TFrame")
@@ -309,10 +319,17 @@ class App:
         dlg.bind("<Escape>", lambda _: dlg.destroy())
 
     def put_log(self, msg):
-        self.log_widget.configure(state="normal")
-        self.log_widget.insert("end", f"[{datetime.now():%H:%M:%S}] {msg}\n")
-        self.log_widget.see("end")
-        self.log_widget.configure(state="disabled")
+        widget = self.log_widget
+        widget.configure(state="normal")
+        widget.insert("end", f"[{datetime.now():%H:%M:%S}] {msg}\n")
+        # Keep only the recent activity in Tk's text widget. The permanent
+        # campaign history is stored separately in SQLite.
+        last_line = int(widget.index("end-1c").split(".", 1)[0])
+        excess = last_line - 1 - MAX_UI_LOG_LINES
+        if excess > 0:
+            widget.delete("1.0", f"{excess + 1}.0")
+        widget.see("end")
+        widget.configure(state="disabled")
 
     def refresh(self):
         counts, total, confirmed, possible = STORE.dashboard_stats()
@@ -356,29 +373,31 @@ class App:
         self.events.put((kind, data))
 
     def pump(self):
-        try:
-            while True:
+        # Never monopolize Tk's main thread when the worker has emitted a
+        # large burst of messages; quickly schedule the remaining batch.
+        for _ in range(MAX_UI_EVENTS_PER_TICK):
+            try:
                 kind, data = self.events.get_nowait()
-                if kind == "status":
-                    self.status.set(data)
-                    # Don't turn every minute of waiting into an enormous log.
-                    if "Next action in" not in data:
-                        self.put_log(data)
-                elif kind == "refresh":
-                    self.refresh()
-                elif kind == "done":
-                    self.running = False
-                    self.start_btn.configure(state="normal")
-                    self.signin_btn.configure(state="normal")
-                    self.retry_btn.configure(state="normal")
-                    self.reset_btn.configure(state="normal")
-                    self.pause_btn.configure(state="disabled", text="Pause")
-                    self.stop_btn.configure(state="disabled")
-                    self.pause_event.clear()
-                    self.refresh()
-        except queue.Empty:
-            pass
-        self.root.after(250, self.pump)
+            except queue.Empty:
+                break
+            if kind == "status":
+                self.status.set(data)
+                # Don't turn every minute of waiting into an enormous log.
+                if "Next action in" not in data:
+                    self.put_log(data)
+            elif kind == "refresh":
+                self.refresh()
+            elif kind == "done":
+                self.running = False
+                self.start_btn.configure(state="normal")
+                self.signin_btn.configure(state="normal")
+                self.retry_btn.configure(state="normal")
+                self.reset_btn.configure(state="normal")
+                self.pause_btn.configure(state="disabled", text="Pause")
+                self.stop_btn.configure(state="disabled")
+                self.pause_event.clear()
+                self.refresh()
+        self.root.after(25 if not self.events.empty() else 250, self.pump)
 
     def google_signin(self):
         if self.running:

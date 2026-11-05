@@ -9,6 +9,63 @@ from scripts import build_windows
 
 
 class BrandingTests(unittest.TestCase):
+    def test_new_install_starts_blank_but_existing_terms_are_restored(self):
+        from tempfile import TemporaryDirectory
+        from storage import Store
+        with TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "data.sqlite3")
+            self.assertEqual(main.initial_search_inputs(store), ("", ""))
+            store.set_setting("ui:searches", "government NJ\\npublic policy")
+            store.set_setting("ui:matches", "politics, Rowan")
+            self.assertEqual(main.initial_search_inputs(store),
+                             ("government NJ\\npublic policy", "politics, Rowan"))
+            # Explicitly empty saved values must stay empty.
+            store.set_setting("ui:searches", "")
+            self.assertEqual(main.initial_search_inputs(store), ("", "politics, Rowan"))
+
+    def test_ui_log_is_bounded_without_erasing_recent_entries(self):
+        class LogWidget:
+            def __init__(self):
+                self.lines = []
+            def configure(self, **kwargs):
+                pass
+            def insert(self, pos, text):
+                self.lines.append(text)
+            def index(self, pos):
+                self_test.assertEqual(pos, "end-1c")
+                return f"{len(self.lines)+1}.0"
+            def delete(self, start, end):
+                self_test.assertEqual(start, "1.0")
+                del self.lines[:int(end.split(".")[0]) - 1]
+            def see(self, pos):
+                pass
+        self_test = self
+        app = main.App.__new__(main.App)
+        app.log_widget = LogWidget()
+        for index in range(main.MAX_UI_LOG_LINES + 12):
+            app.put_log(f"Event {index}")
+        self.assertEqual(len(app.log_widget.lines), main.MAX_UI_LOG_LINES)
+        self.assertIn("Event 12", app.log_widget.lines[0])
+        self.assertIn(f"Event {main.MAX_UI_LOG_LINES + 11}", app.log_widget.lines[-1])
+
+    def test_ui_pump_processes_bursts_in_small_batches(self):
+        import queue
+        from unittest.mock import MagicMock
+        app = main.App.__new__(main.App)
+        app.events = queue.Queue()
+        app.root = MagicMock()
+        app.status = MagicMock()
+        app.put_log = MagicMock()
+        for index in range(main.MAX_UI_EVENTS_PER_TICK + 7):
+            app.events.put(("status", f"Event {index}"))
+        app.pump()
+        self.assertEqual(app.put_log.call_count, main.MAX_UI_EVENTS_PER_TICK)
+        self.assertEqual(app.events.qsize(), 7)
+        app.root.after.assert_called_once_with(25, app.pump)
+        app.pump()
+        self.assertEqual(app.events.qsize(), 0)
+        app.root.after.assert_called_with(250, app.pump)
+
     def test_assets_present(self):
         for name in ('connectionpilot.png', 'connectionpilot-header.png',
                      'connectionpilot.ico', 'social-preview.png'):
