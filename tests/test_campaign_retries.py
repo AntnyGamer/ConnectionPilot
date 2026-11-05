@@ -72,6 +72,32 @@ class WorkerRecoveryTests(unittest.TestCase):
              patch("automation.collect_results", side_effect=StopRun("stop")):
             self.run_fake()
 
+    def test_search_collection_checks_only_queued_count_not_all_statuses(self):
+        from unittest.mock import patch as mock_patch
+        from types import SimpleNamespace
+
+        class Anchors:
+            def count(self): return 0
+            @property
+            def first(self):
+                return self
+            def wait_for(self, **kwargs): raise TimeoutError("no profile cards")
+        class Page:
+            url = "https://www.linkedin.com/search/results/people/"
+            def goto(self, *args, **kwargs): return SimpleNamespace(status=200)
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return SimpleNamespace(all=lambda: [], count=lambda: 0)
+
+        # Empty result pages should not even need a status breakdown.
+        with mock_patch("automation.check_protection"):
+            with mock_patch.object(self.store, "counts",
+                                   side_effect=AssertionError("Unexpected GROUP BY")):
+                self.assertEqual(collect_results(
+                    Page(), self.store, ["policy"], ["policy"],
+                    self.stop, self.status.append, 20), 0)
+
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
         # The app must explicitly enable browser sandboxing on Windows.
