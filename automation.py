@@ -51,6 +51,13 @@ def check_protection(page):
     if not is_trusted_linkedin_page(page.url):
         raise ProtectionScreen("Browser left the verified LinkedIn HTTPS site; campaign stopped")
     path = urlsplit(page.url).path.casefold()
+    # The restriction screen may be displayed on a long page whose visible
+    # main text exceeds the old short-warning heuristic. Check its explicit
+    # heading before reading profile content; do not scan unrelated bios.
+    restricted = page.get_by_role("heading", name=re.compile(
+        r"^Your account has been (?:temporarily )?restricted$", re.I))
+    if any(h.is_visible() for h in restricted.all()[:5]):
+        raise ProtectionScreen("LinkedIn reports that this account is restricted; stop automated access")
     if any(path == prefix or path.startswith(prefix + "/") for prefix in
            ("/login", "/authwall", "/checkpoint", "/challenge", "/uas", "/login-submit")):
         raise ProtectionScreen("LinkedIn displayed a sign-in, checkpoint or verification page")
@@ -166,6 +173,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
         seen_this_page = set()
+        # One query per search page, rather than re-reading DOM cards and
+        # biographies for profiles already handled in prior campaigns.
+        processed = store.processed_urls()
         valid_profile_links = set()
         named_profile_links = set()
         extraction_errors = 0
@@ -188,6 +198,13 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 valid_profile_links.add(url)
                 if url in seen_this_page:
                     continue
+                if url in processed:
+                    # This was a named person on an earlier search. Their
+                    # existing terminal status is intentionally preserved.
+                    # Count the page as understood so discovery can advance.
+                    seen_this_page.add(url)
+                    named_profile_links.add(url)
+                    continue
                 name = search_result_name(anchor.inner_text(timeout=1200) or "")
                 if not name:
                     name = search_result_name("", anchor.get_attribute("aria-label") or "")
@@ -208,6 +225,13 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   return (el.innerText||'').trim();
                 }""") or ""
                 if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
+                    continue
+                # Search cards that explicitly say 3rd degree can be
+                # excluded when a 2nd-only filter is enabled. Unspecified
+                # degree stays eligible for verification on the full profile.
+                if (str((filters or {}).get("degree", "Any")) == "2nd only"
+                        and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
+                                      snippet, re.I)):
                     continue
                 score = match_score(snippet, match_terms)
                 if score < max(0, int(minimum_score)):
@@ -718,14 +742,12 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                         result = "uncertain"
                         reason = "Browser error after an attempted click; set aside without retry: " + safe_diagnostic(exc, 150)
                     else:
-                        retries = store.record_inspection_failure(profile["url"])
-                        if retries < 3:
-                            notify(f"Profile inspection failed before any invitation action "
-                                   f"({retries}/3); retrying in 10 seconds: {safe_diagnostic(exc, 120)}")
-                            wait_or_stop(10, stop_event, pause_event, notify)
-                            continue
+                        # A slow page or an unrecognized layout is not a reason
+                        # to reload the same person's data multiple times.
+                        # Preserve the unattempted status and continue once.
+                        store.record_inspection_failure(profile["url"])
                         result = "skipped"
-                        reason = "Could not inspect profile after three pre-click attempts: " + safe_diagnostic(exc, 150)
+                        reason = "Profile inspection failed before any click; no automatic reinspection: " + safe_diagnostic(exc, 150)
                 if result in ("paused", "deferred"):
                     continue
                 store.mark(profile["url"], result, reason)
