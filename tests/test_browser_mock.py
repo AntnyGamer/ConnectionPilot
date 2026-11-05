@@ -895,7 +895,7 @@ class BrowserMockTests(unittest.TestCase):
                                 ['policy'], threading.Event(), messages.append, 100)
         self.assertEqual(added, 0)
         self.assertEqual(self.db.setting('page:government', '1'), '1')
-        self.assertIn('no member names', ' '.join(messages))
+        self.assertIn('lack identifiable names', ' '.join(messages))
 
     def test_page_of_only_processed_generic_links_can_advance(self):
         known = 'https://www.linkedin.com/in/known-member/'
