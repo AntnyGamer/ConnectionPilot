@@ -284,9 +284,11 @@ def _profile_intro(page, expected_name):
         return None, "Name mismatch: couldn't identify one verified profile heading; nothing clicked."
     name_heading = matching[0]
 
-    # Choose the *smallest* named introduction containing the person's own
-    # action controls. Never search the entire page for Connect buttons.
+    # Search outward from the verified name for the nearest *direct* Connect
+    # control. A More-only inner wrapper is not the whole action panel: newer
+    # layouts can put the visible Connect button in a sibling wrapper.
     current = name_heading.locator('xpath=..')
+    fallback = None
     for _ in range(12):
         if not current.count():
             break
@@ -294,18 +296,34 @@ def _profile_intro(page, expected_name):
             break
         actions = current.get_by_role("button", name=re.compile(
             r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I))
-        if actions.count():
-            # A broad layout wrapper may include suggestions for OTHER people.
-            # Do not use its Connect button as the verified person's control.
-            # Failing closed here is safer than inviting the wrong recipient.
+        if any(action.is_visible() for action in actions.all()):
+            # Never widen the panel into a sidebar or another person's card.
+            # If there was a verified smaller panel, its More action is still
+            # a safe fallback; an unrelated Connect action is not.
             headings = current.locator('h1, h2, h3, [role="heading"]').all()[:50]
             if any(h.is_visible() and not names_match(expected_name, h.inner_text(timeout=2000).strip())
                    for h in headings):
-                return None, "Action panel also contains other headings; nothing clicked."
+                return (fallback, None) if fallback is not None else (
+                    None, "Action panel also contains other headings; nothing clicked.")
             if current.locator("aside").count():
-                return None, "Action panel contains a sidebar; nothing clicked."
-            return current, None
+                return (fallback, None) if fallback is not None else (
+                    None, "Action panel contains a sidebar; nothing clicked.")
+
+            connects = current.get_by_role("button", name=re.compile(
+                r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I))
+            direct = [button for button in connects.all() if button.is_visible()]
+            if len(direct) > 1:
+                return None, "Multiple visible Connect controls; nothing clicked."
+            if len(direct) == 1:
+                return current, None
+            # Pending/connected is definitive; do not widen to another Connect.
+            if find_first_action(current, "Pending") or find_first_action(current, "Remove connection"):
+                return current, None
+            if fallback is None:
+                fallback = current
         current = current.locator('xpath=..')
+    if fallback is not None:
+        return fallback, None
     return None, "Verified profile name, but couldn't locate its own action panel. Nothing clicked."
 
 
