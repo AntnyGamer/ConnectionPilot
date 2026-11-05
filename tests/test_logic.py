@@ -248,6 +248,7 @@ class StorageTests(unittest.TestCase):
             ("name-layout", "Name mismatch: couldn't identify one verified profile heading; nothing clicked."),
             ("action-layout", "Verified profile name, but couldn't locate its own action panel. Nothing clicked."),
             ("connect-layout", "No Connect option in verified profile introduction."),
+            ("menu-layout", "No unambiguous Connect menu action."),
         )
         for slug, reason in cases:
             url = 'https://www.linkedin.com/in/' + slug + '/'
