@@ -147,6 +147,38 @@ class Store:
                 OR key LIKE 'inspect_fail:%'
                 OR key IN ('run:matching', 'ui:searches', 'ui:matches')""")
 
+    @staticmethod
+    def _automated_page_key(when=None):
+        day = (when or datetime.now(TZ)).astimezone(TZ).date().isoformat()
+        return "safety:automated-pages:" + day
+
+    def automated_pages_today(self, when=None):
+        """Count app-initiated LinkedIn navigations, not invitations."""
+        with self._conn() as db:
+            row = db.execute("SELECT value FROM settings WHERE key=?",
+                             (self._automated_page_key(when),)).fetchone()
+            return int(row[0]) if row else 0
+
+    def reserve_automated_page(self, maximum, when=None):
+        """Record a possible page load before navigation, atomically.
+
+        This is a conservative activity guardrail, NOT a LinkedIn-approved
+        limit. Campaign resets must not erase these safety counters.
+        """
+        if maximum < 1:
+            raise ValueError("Automated navigation cap must be positive")
+        key = self._automated_page_key(when)
+        with self._conn() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            count = int(row[0]) if row else 0
+            if count >= maximum:
+                return False
+            db.execute("""INSERT INTO settings(key, value) VALUES(?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (key, str(count + 1)))
+            return True
+
     def setting(self, key, default=None):
         with self._conn() as db:
             row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
