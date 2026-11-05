@@ -169,6 +169,49 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'skipped', reason)
         self.assertEqual(self.db.attempts_today(), 0)
 
+    def test_professional_credential_does_not_trigger_title_mismatch(self):
+        doc = """<html><head><title>Sarah E. Jones | LinkedIn</title></head><body>
+          <main><section><h1>Sarah E Jones, Esq.</h1>
+          <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section></main></body></html>"""
+        class LocalPage:
+            url = 'https://www.linkedin.com/in/sarah-jones/'
+            def __init__(self, page):
+                self.page = page
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+            def __getattr__(self, name):
+                return getattr(self.page, name)
+        url = LocalPage.url
+        self.db.add(url, 'Sarah E Jones, Esq.', 'policy', 25)
+        result, reason = send_one(LocalPage(self.page), {'url': url, 'name': 'Sarah E Jones, Esq.'},
+                                  self.db, lambda _: None)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
+    def test_h1_has_priority_over_repeated_h2_same_name(self):
+        doc = html("""<h2>Test Example</h2>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+
+    def test_direct_connect_link_in_verified_profile(self):
+        doc = html("""<a id='connect' href='#'
+            onclick="event.preventDefault(); this.textContent='Pending'">Connect</a>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
+    def test_connect_with_member_menu_link(self):
+        doc = html("""<button id='more'
+            onclick="document.getElementById('menu').hidden=false">More</button>
+            <div role='menu' id='menu' hidden><a href='#' id='menu-connect'
+            onclick="event.preventDefault(); document.getElementById('more').textContent='Pending'">
+            Connect with Test Example</a></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
     def test_other_person_connect_not_used_when_more_is_closer(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div class='layout'><div><h2>Test Example</h2>
