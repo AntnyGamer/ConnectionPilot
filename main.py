@@ -458,10 +458,11 @@ class App:
             STORE.requeue_filtered()
             STORE.reset_search_pages(searches)
             STORE.set_setting("run:matching", matching_config)
-        for k, val in {"target": target, "daily": daily, "cooldown": cooldown,
-                       "searches": "\n".join(searches), "matches": ", ".join(matches),
-                       "filters": current_filters_json}.items():
-            STORE.set_setting("ui:" + k, val)
+        STORE.set_settings({
+            "ui:target": target, "ui:daily": daily, "ui:cooldown": cooldown,
+            "ui:searches": "\n".join(searches), "ui:matches": ", ".join(matches),
+            "ui:filters": current_filters_json,
+        })
         self.stop_event.clear()
         self.pause_event.clear()
         self.running = True
