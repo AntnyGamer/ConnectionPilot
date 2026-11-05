@@ -79,6 +79,22 @@ class WorkerRecoveryTests(unittest.TestCase):
 
 
 class SessionProtectionTests(unittest.TestCase):
+    def test_long_profile_checks_only_read_bounded_main_text(self):
+        class Intro:
+            def evaluate(self, script, timeout=None):
+                assert 'slice(0, 500)' in script
+                assert timeout == 3000
+                return 'A' * 500 + '…'
+            def inner_text(self, **kwargs):
+                raise AssertionError('Should not transfer an entire large profile')
+        class Page:
+            url = 'https://www.linkedin.com/in/test-profile/'
+            def locator(self, selector):
+                if selector == 'main':
+                    return SimpleNamespace(count=lambda: 1, first=Intro())
+                return SimpleNamespace(all=lambda: [])
+        check_protection(Page())
+
     def test_login_or_authwall_after_session_expiry_halts(self):
         for path in ('/login', '/authwall', '/checkpoint', '/challenge'):
             with self.subTest(path=path):

@@ -115,6 +115,27 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'sent', reason)
         self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
 
+    def test_delayed_more_menu_item_is_not_skipped(self):
+        # A delayed menu needs readiness detection, not a hard-coded sleep.
+        doc = html("""<button id='more' onclick=\"setTimeout(() => {
+          document.getElementById('menu').hidden=false }, 260)\">More</button>
+          <div role='menu' id='menu' hidden><div role='menuitem' id='menu-connect'
+            onclick=\"document.getElementById('more').textContent='Pending'\">Connect</div></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
+    def test_more_menu_warning_stops_before_connect_click(self):
+        doc = html("""<button id='more' onclick=\"document.getElementById('menu').hidden=false;
+          document.getElementById('warning').hidden=false\">More</button>
+          <div role='menu' id='menu' hidden><div role='menuitem' id='menu-connect'
+            onclick=\"this.dataset.clicked='yes'\">Connect</div></div>
+          <div role='alert' id='warning' hidden>You've reached the weekly invitation limit</div>""")
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertIsNone(self.page.locator('#menu-connect').get_attribute('data-clicked'))
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_other_person_connect_not_used_when_more_is_closer(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div class='layout'><div><h2>Test Example</h2>
