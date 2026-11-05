@@ -249,7 +249,11 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   // Do not drop short-but-useful descriptions; never borrow
                   // search text from a different person's profile card.
                   const key = a => {
-                    const p = (a.pathname || '').toLowerCase();
+                    // Explicit base handles relative hrefs even in a local
+                    // test document without a normal browser page URL.
+                    const href = a.getAttribute('href') || '';
+                    const p = new URL(href, 'https://www.linkedin.com')
+                      .pathname.toLowerCase();
                     return p.endsWith('/') ? p.slice(0, -1) : p;
                   };
                   const own = key(el);
