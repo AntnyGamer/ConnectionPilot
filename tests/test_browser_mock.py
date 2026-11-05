@@ -636,22 +636,61 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIsNone(self.db.next_profile())
         self.assertEqual(self.db.setting('page:government'), '2')
 
-    def test_search_redirect_to_feed_stops_without_processing_links(self):
+    def test_search_redirect_skips_only_that_phrase_and_continues(self):
         doc = """<main><a href='/in/unrelated-person/'>Unrelated Person</a>
             <p>Government policy analyst</p></main>"""
+        good = """<main><div><a href='/in/real-member/'>Real Member</a>
+            <p>Government policy analyst in New Jersey</p></div></main>"""
         class RedirectedPage:
-            url = 'https://www.linkedin.com/feed/'
             def __init__(self, browser):
                 self.browser = browser
-            def goto(self, *args, **kwargs):
-                self.browser.set_content(doc)
+                self.url = 'https://www.linkedin.com/feed/'
+                self.visits = []
+            def goto(self, url, *args, **kwargs):
+                self.visits.append(url)
+                if 'keywords=government' in url:
+                    self.url = 'https://www.linkedin.com/search/results/people/'
+                    self.browser.set_content(good)
+                else:
+                    self.url = 'https://www.linkedin.com/feed/'
+                    self.browser.set_content(doc)
             def __getattr__(self, name):
                 return getattr(self.browser, name)
-        with self.assertRaises(StopRun):
-            collect_results(RedirectedPage(self.page), self.db, ['policy'],
-                            ['policy'], threading.Event(), lambda _: None, 100)
-        self.assertEqual(self.db.counts().get('queued', 0), 0)
-        self.assertIsNone(self.db.setting('page:policy'))
+        page = RedirectedPage(self.page)
+        messages = []
+        self.assertEqual(collect_results(page, self.db, ['policy', 'government'],
+                         ['policy'], threading.Event(), messages.append, 100), 1)
+        self.assertEqual(len(page.visits), 2)
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+        self.assertEqual(self.db.setting('page:government'), '2')
+        self.assertEqual(self.db.next_profile()['url'],
+                         'https://www.linkedin.com/in/real-member/')
+        self.assertIn('redirected', ' '.join(messages))
+
+    def test_search_server_error_skips_phrase_without_stopping_campaign(self):
+        from types import SimpleNamespace
+        class ServerErrorPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = 0
+            def goto(self, url, **kwargs):
+                self.visits += 1
+                if 'keywords=policy' in url:
+                    self.browser.set_content('<main></main>')
+                    return SimpleNamespace(status=503)
+                self.browser.set_content('<main><div><a href="/in/valid-member/">Valid Member</a>'
+                                         '<p>Government policy analyst in New Jersey</p></div></main>')
+                return SimpleNamespace(status=200)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        page = ServerErrorPage(self.page)
+        count = collect_results(page, self.db, ['policy', 'government'], ['policy'],
+                                threading.Event(), lambda _: None, 100)
+        self.assertEqual(count, 1)
+        self.assertEqual(page.visits, 2)
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+        self.assertEqual(self.db.setting('page:government'), '2')
 
     def test_restriction_after_search_hydration_stops_without_more_navigation(self):
         class LateAnchors:
