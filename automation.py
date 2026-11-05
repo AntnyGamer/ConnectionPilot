@@ -592,6 +592,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
         try:
             browser = p.chromium.launch_persistent_context(
                 profile, headless=False, **options,
+                chromium_sandbox=True,
                 viewport={"width": 1280, "height": 900}, locale="en-US")
         except Exception as exc:
             if channel in SUPPORTED:

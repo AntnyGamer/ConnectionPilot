@@ -46,6 +46,16 @@ class WorkerRecoveryTests(unittest.TestCase):
                 run_campaign(self.store, self.config, self.stop, self.pause, self.status.append, lambda: None)
             return sleeper.call_count
 
+    def test_campaign_uses_chromium_sandbox(self):
+        # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
+        # The app must explicitly enable browser sandboxing on Windows.
+        with patch('automation.collect_results', side_effect=StopRun('done')):
+            self.run_fake()
+        settings = self.context.chromium.launch_persistent_context.call_args
+        self.assertTrue(settings.kwargs['chromium_sandbox'])
+        self.assertFalse(settings.kwargs['headless'])
+        self.assertNotIn('--no-sandbox', settings.kwargs.get('args', []))
+
     def test_invalid_search_page_restarts_at_first_page(self):
         self.page.wait_for_timeout = MagicMock()
         anchors = MagicMock()
