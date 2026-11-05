@@ -12,6 +12,13 @@ from automation import collect_results
 from storage import Store
 
 
+def empty_locator():
+    """Minimal Playwright-like locator used by offline search-page fakes."""
+    return SimpleNamespace(
+        count=lambda: 0, all=lambda: [],
+        filter=lambda **kwargs: empty_locator())
+
+
 class BootstrapTests(unittest.TestCase):
     def test_launcher_uses_its_own_directory_for_main_and_requirements(self):
         from importlib.metadata import PackageNotFoundError
@@ -89,7 +96,7 @@ class QueueTests(unittest.TestCase):
                 if selector == 'main':
                     return SimpleNamespace(count=lambda: 1,
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
-                return SimpleNamespace(all=lambda: [])
+                return empty_locator()
 
         original_add = self.store.add
         def first_add(*args):
@@ -131,7 +138,7 @@ class QueueTests(unittest.TestCase):
             def locator(self, selector):
                 if selector == 'main a[href*="/in/"]':
                     return Anchors()
-                return SimpleNamespace(count=lambda: 0, all=lambda: [])
+                return empty_locator()
 
         with patch.object(self.store, 'processed_urls', wraps=self.store.processed_urls) as processed:
             count = collect_results(Page(), self.store,
@@ -167,7 +174,7 @@ class QueueTests(unittest.TestCase):
                 if selector == 'main':
                     return SimpleNamespace(count=lambda: 1,
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
-                return SimpleNamespace(all=lambda: [])
+                return empty_locator()
 
         messages = []
         added = collect_results(Page(), self.store, ['government'], ['policy'],
