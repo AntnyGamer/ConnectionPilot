@@ -231,6 +231,82 @@ class StorageTests(unittest.TestCase):
                 "SELECT count(*) FROM setting_writes").fetchone()[0], 1)
         self.assertEqual(self.db.setting("ui:searches"), "government")
 
+    def test_batch_settings_preserve_values_and_ignore_unchanged_rows(self):
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE setting_changes(key TEXT, value TEXT)")
+            conn.execute("""CREATE TRIGGER track_setting_changes AFTER UPDATE ON settings
+                BEGIN
+                    INSERT INTO setting_changes(key, value) VALUES(NEW.key, NEW.value);
+                END""")
+        values = {"ui:searches": "government\npolicy", "ui:matches": "law, policy",
+                  "ui:daily": 200, "ui:cooldown": 90.5}
+        self.db.set_settings(values)
+        for key, value in values.items():
+            self.assertEqual(self.db.setting(key), str(value))
+        self.db.set_settings(values)
+        with self.db._conn() as conn:
+            self.assertEqual(
+                conn.execute("SELECT count(*) FROM setting_changes").fetchone()[0], 0)
+        self.db.set_settings({"ui:daily": 180, "ui:searches": "government\npolicy"})
+        with self.db._conn() as conn:
+            self.assertEqual(
+                [tuple(row) for row in conn.execute(
+                    "SELECT key, value FROM setting_changes")], [("ui:daily", "180")])
+        self.assertEqual(self.db.setting("ui:daily"), "180")
+
+    def test_batch_setting_failure_rolls_back_all_keys(self):
+        self.db.set_setting("ui:daily", "200")
+        with self.db._conn() as conn:
+            conn.execute("""CREATE TRIGGER block_test_setting BEFORE INSERT ON settings
+                WHEN NEW.key='ui:reject' BEGIN
+                    SELECT RAISE(ABORT, 'test rollback');
+                END""")
+        with self.assertRaises(Exception):
+            self.db.set_settings({"ui:daily": "250", "ui:reject": "1"})
+        self.assertEqual(self.db.setting("ui:daily"), "200")
+        self.assertIsNone(self.db.setting("ui:reject"))
+
+    def test_queued_count_matches_full_status_counts(self):
+        urls = [f"https://www.linkedin.com/in/count-{i}/" for i in range(6)]
+        for i, url in enumerate(urls):
+            self.db.add(url, f"Count {i}", "policy", 25)
+        self.db.mark(urls[1], "sent", "Invitation confirmed")
+        self.db.mark(urls[2], "skipped", "Already connected")
+        self.db.mark(urls[3], "filtered", "Not relevant")
+        self.db.mark(urls[4], "uncertain", "Click began")
+        self.assertEqual(self.db.queued_count(), 2)
+        self.assertEqual(self.db.queued_count(), self.db.counts().get("queued", 0))
+        with self.db._conn() as conn:
+            plan = conn.execute(
+                "EXPLAIN QUERY PLAN SELECT count(*) FROM profiles WHERE status='queued'"
+            ).fetchall()
+        self.assertTrue(any("profiles_queue_priority" in row[3] for row in plan), plan)
+        self.db.clear_campaign_data()
+        self.assertEqual(self.db.queued_count(), 0)
+
+    def test_repeated_mark_does_not_rewrite_attempt_when_result_unchanged(self):
+        url = "https://www.linkedin.com/in/repeat-status/"
+        self.db.add(url, "Repeat Status", "policy", 25)
+        with self.db._conn() as conn:
+            conn.execute("CREATE TABLE result_writes(result TEXT)")
+            conn.execute("""CREATE TRIGGER capture_repeat_update AFTER UPDATE ON attempts
+                BEGIN INSERT INTO result_writes(result) VALUES(NEW.result); END""")
+        self.db.mark(url, "uncertain", "First click")
+        with self.db._conn() as conn:
+            first_time = conn.execute(
+                "SELECT initiated_at FROM attempts WHERE url=?", (url,)).fetchone()[0]
+        self.db.mark(url, "uncertain", "Same status")
+        self.db.mark(url, "sent", "Confirmed")
+        self.db.mark(url, "sent", "Same confirmation")
+        self.db.mark(url, "skipped", "Later status")
+        self.db.mark(url, "skipped", "Same later status")
+        with self.db._conn() as conn:
+            self.assertEqual([row[0] for row in conn.execute(
+                "SELECT result FROM result_writes")], ["sent", "skipped"])
+            row = conn.execute(
+                "SELECT initiated_at, result FROM attempts WHERE url=?", (url,)).fetchone()
+        self.assertEqual(tuple(row), (first_time, "skipped"))
+
     def test_filters_can_be_reconsidered(self):
         a = 'https://www.linkedin.com/in/profile-filtered/'
         self.db.add(a, 'Profile', 'public policy', 25)
