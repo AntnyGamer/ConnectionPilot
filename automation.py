@@ -312,7 +312,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
         notify(f"Queued {added} new matches this pass.")
         # Stop once we have enough to process for the current day; later passes discover more.
-        if store.counts().get("queued", 0) >= min(30, target):
+        if store.queued_count() >= min(30, target):
             break
     return added
 
