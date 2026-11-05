@@ -124,6 +124,9 @@ class LogicTests(unittest.TestCase):
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
         self.assertTrue(has_stop_signal('Please complete CAPTCHA'))
+        # The broad "temporarily restricted" phrase already covers the
+        # removed redundant full restriction-message entry.
+        self.assertTrue(has_stop_signal('Your account has been temporarily restricted'))
         self.assertFalse(has_stop_signal('Connection request sent'))
     def test_work_hours(self):
         self.assertTrue(in_work_hours(datetime(2026, 11, 2, 10, tzinfo=TZ), 9, 19))
