@@ -236,14 +236,6 @@ class Store:
                                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchone()
             return row[0] if row else None
 
-    def record_inspection_failure(self, url):
-        """Count pre-click inspection failures, surviving application restarts."""
-        key = "inspect_fail:" + url
-        with self._conn() as db:
-            db.execute("""INSERT INTO settings(key, value) VALUES (?, '1')
-                ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1""", (key,))
-            return int(db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()[0])
-
     def history(self, limit=40):
         with self._conn() as db:
             rows = db.execute("SELECT at, event, detail FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
