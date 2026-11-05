@@ -27,7 +27,7 @@ jobs:
       - name: Verify dependencies
         run: |
           python -m pip check
-          python -c "from importlib.metadata import version; from bootstrap import pinned_dependencies; assert all(version(name) == wanted for name, wanted in pinned_dependencies().items()), 'Installed runtime packages do not match requirements.txt'; assert version('pyinstaller') == '6.22.3', 'Unexpected PyInstaller build version'"
+          python -c "from importlib.metadata import version; from bootstrap import pinned_dependencies; assert all(version(name) == wanted for name, wanted in pinned_dependencies().items()), 'Installed runtime packages do not match requirements.txt'; from pathlib import Path; build_pins = dict(line.split('==', 1) for line in Path('requirements-build.txt').read_text().splitlines() if line.strip()); assert all(version(name) == required for name, required in build_pins.items()), 'Installed build packages do not match requirements-build.txt'"
       - name: Install browser for offline tests
         run: python -m playwright install chromium
       - name: Run isolated test suite
