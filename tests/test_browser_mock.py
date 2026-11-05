@@ -189,6 +189,32 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'sent', reason)
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
 
+    def test_stale_title_mismatch_recovers_after_profile_load(self):
+        doc = html("""<button id='connect'
+            onclick="this.textContent='Pending'">Connect</button>""")
+        class StaleTitlePage:
+            url = MOCK_URL
+            def __init__(self, page):
+                self.page = page
+                self.rechecks = 0
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+            def title(self):
+                return ("Different Person | LinkedIn" if self.rechecks == 0
+                        else "Test Example | LinkedIn")
+            def wait_for_timeout(self, ms):
+                self.rechecks += 1
+                self.page.wait_for_timeout(min(ms, 30))
+            def __getattr__(self, name):
+                return getattr(self.page, name)
+        pg = StaleTitlePage(self.page)
+        self.db.add(MOCK_URL, "Test Example", "policy", 25)
+        result, reason = send_one(pg, {"url": MOCK_URL, "name": "Test Example"},
+                                  self.db, lambda _: None)
+        self.assertEqual(result, "sent", reason)
+        self.assertGreaterEqual(pg.rechecks, 1)
+        self.assertEqual(self.page.locator("#connect").inner_text(), "Pending")
+
     def test_h1_has_priority_over_repeated_h2_same_name(self):
         doc = html("""<h2>Test Example</h2>
             <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
