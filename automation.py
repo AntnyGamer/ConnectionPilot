@@ -58,7 +58,11 @@ def check_protection(page):
     # Filtering in the browser avoids reading every profile heading and, unlike
     # the old first-20 cutoff, cannot miss a warning later in the page.
     restricted = page.locator('h1, h2, h3, h4, h5, h6, [role="heading"]').filter(
-        has_text=re.compile(r"^\s*Your account has been (?:temporarily )?restricted\s*$", re.I))
+        has_text=re.compile(
+            r"^\s*(?:Your account has been (?:temporarily |permanently )?restricted"
+            r"(?: as a precaution)?|Your account is temporarily restricted|"
+            r"Access to your account has been temporarily restricted|"
+            r"We['’]ve restricted your account temporarily)\s*$", re.I))
     if any(h.is_visible() for h in restricted.all()):
         raise ProtectionScreen(
             "LinkedIn reports that this account is restricted; stop automated access")
