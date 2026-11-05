@@ -73,7 +73,7 @@ Tests use simulated LinkedIn pages, not an authenticated LinkedIn account. A pas
 - The app stops on sign-in expiration, account limits, security/verification challenges, or explicit Stop. Such service-side requirements cannot be guaranteed away; it is not possible to promise 100% successful unattended invitations.
 
 ## Reliability fixes in this v1 build
-- Temporary failures before a Connect click receive at most two additional inspections, spaced 10 seconds apart. The count persists between app restarts; uncertain invitation attempts are never retried automatically.
+- A pre-click profile inspection failure is skipped without automatically reloading the same member. **Retry safe skips** permits deliberate reinspection, while potentially sent invitations are never automatically retried.
 - Empty search pages are retried twice with a delay before discovery stops.
 - The last invitation attempt is selected by offset-aware chronological time, so clock fall-back and imported records cannot pick an older invitation.
 - A session that redirects to LinkedIn login/authwall is now recognized as a halt condition rather than continuing through other profiles.
