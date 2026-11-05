@@ -704,9 +704,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 if pause_event.is_set():
                     wait_or_stop(2, stop_event, pause_event, notify)
                     continue
-                counts = store.counts()
                 attempted = store.total_attempts()
                 if attempted >= config["target"]:
+                    # Reading grouped profile counts is unnecessary on every
+                    # idle/active worker iteration; only goal reporting uses it.
+                    counts = store.counts()
                     notify(f"Goal reached: {attempted} total invitation attempt(s), including "
                            f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
                            "unconfirmed. Some clicks may have been rejected by LinkedIn.")
