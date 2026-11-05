@@ -169,12 +169,19 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         notify(f"Looking at page {page_no} for: {search}")
         response = page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
         reject_denied_page(response)
-        # Verify the destination before parsing cards. A redirect to the feed
-        # or another LinkedIn page can expose unrelated profile links.
+        # An ordinary redirect or temporary server error is not evidence of
+        # account restriction. Skip only this search page and retain its cursor,
+        # but do not parse unrelated links as member search results.
         check_protection(page)
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
-            raise StopRun("LinkedIn redirected away from People search; "
-                          "stopped rather than reading unrelated profile links.")
+            notify(f"LinkedIn redirected the search for '{search}'; leaving page {page_no} "
+                   "pending and trying other search phrases.")
+            continue
+        code = getattr(response, "status", None)
+        if isinstance(code, int) and 500 <= code <= 599:
+            notify(f"LinkedIn returned a temporary server error (HTTP {code}) for "
+                   f"'{search}'; keeping page {page_no} pending.")
+            continue
         # Profile links inside visible main-content search results.
         anchors = page.locator('main a[href*="/in/"]')
         # A slow-loading result list is not proof that the search is exhausted.
@@ -189,8 +196,13 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 check_protection(page)
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
-        # Result hydration may have changed the page since the first check.
+        # Result hydration may have changed the page or redirected elsewhere.
+        # Check again before treating any links as search candidates.
         check_protection(page)
+        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
+            notify(f"LinkedIn redirected the results for '{search}' during loading; "
+                   f"retaining page {page_no} and trying other search phrases.")
+            continue
         seen_this_page = set()
         # Skip already processed people without extracting their card content.
         valid_profile_links = set()
