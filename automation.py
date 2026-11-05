@@ -73,8 +73,7 @@ def check_protection(page):
         if not heading.is_visible():
             continue
         if content_page and not heading.evaluate("""el => {
-            const shell = el.closest('[role="alert"], [role="alertdialog"], '
-                                   '.artdeco-toast-item, .artdeco-inline-feedback');
+            const shell = el.closest('[role="alert"], [role="alertdialog"], .artdeco-toast-item, .artdeco-inline-feedback');
             return Boolean(shell) || el.parentElement === document.body;
         }"""):
             continue
@@ -94,10 +93,8 @@ def check_protection(page):
         # Ignore a role="alert" or a copied notice embedded in a member's
         # article/comment. Site warning UI is not part of user-authored text.
         try:
-            inside_member_content = surface.evaluate("""el => Boolean(el.closest(
-                'article, [role="article"], .feed-shared-update-v2, '
-                '.comments-comment-item, .update-components-text, '
-                '.pv-about-section, .pv-profile-section'))""")
+            inside_member_content = surface.evaluate(
+                """el => Boolean(el.closest('article, [role="article"], .feed-shared-update-v2, .comments-comment-item, .update-components-text, .pv-about-section, .pv-profile-section'))""")
         except AttributeError:
             inside_member_content = False  # Lightweight offline fake locator.
         if inside_member_content:
