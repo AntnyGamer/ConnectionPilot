@@ -159,6 +159,19 @@ class Store:
             rows = db.execute("SELECT status,count(*) n FROM profiles GROUP BY status").fetchall()
             return {row[0]: row[1] for row in rows}
 
+    def dashboard_stats(self):
+        """Read dashboard counters together from one consistent SQLite snapshot."""
+        start, end = self._today_bounds()
+        with self._conn() as db:
+            rows = db.execute("SELECT status, count(*) FROM profiles GROUP BY status").fetchall()
+            counts = {row[0]: row[1] for row in rows}
+            total = db.execute("SELECT count(*) FROM attempts").fetchone()[0]
+            possible, confirmed = db.execute("""SELECT count(*),
+                COALESCE(SUM(CASE WHEN result='sent' THEN 1 ELSE 0 END), 0)
+                FROM attempts WHERE initiated_at >= ? AND initiated_at < ?""",
+                (start, end)).fetchone()
+            return counts, total, confirmed, possible
+
     def attempts_today(self):
         """Conservatively count unverified clicks as possible invitations."""
         start, end = self._today_bounds()
