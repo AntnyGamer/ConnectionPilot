@@ -15,6 +15,15 @@ from logic import (has_stop_signal, in_work_hours, local_now, match_score,
                    clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours)
 
+# Restricted account titles are checked as complete headings, never as a
+# keyword occurring anywhere in someone's authored text.
+RESTRICTION_TITLE = re.compile(
+    r"^\s*(?:Your account has been (?:temporarily |permanently )?restricted"
+    r"(?: as a precaution)?|Your account is temporarily restricted|"
+    r"Access to your account has been temporarily restricted|"
+    r"We['’]ve restricted your account temporarily)\s*$", re.I)
+
+
 class StopRun(Exception):
     pass
 
@@ -64,11 +73,7 @@ def check_protection(page):
                          "/groups", "/company", "/news")))
     # Match the complete official title rather than a keyword in a bio.
     restricted = page.locator('h1, h2, h3, h4, h5, h6, [role="heading"]').filter(
-        has_text=re.compile(
-            r"^\s*(?:Your account has been (?:temporarily |permanently )?restricted"
-            r"(?: as a precaution)?|Your account is temporarily restricted|"
-            r"Access to your account has been temporarily restricted|"
-            r"We['’]ve restricted your account temporarily)\s*$", re.I))
+        has_text=RESTRICTION_TITLE)
     for heading in restricted.all():
         if not heading.is_visible():
             continue
@@ -128,12 +133,23 @@ def check_protection(page):
             }""", timeout=3000).strip()
         except AttributeError:
             text = main.first.inner_text(timeout=3000).strip()
+        first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
         if content_page:
-            # A short feed post or profile section can also start with an
-            # exact copied notice. A main-text match is not sufficient here.
-            warning = False
+            # A restriction screen can replace the entire search/profile main
+            # without changing its URL. Only treat an exact title as a full
+            # page notice when no authored post, comment or profile section
+            # remains. Quoted messages in those areas must never be a block.
+            warning = bool(RESTRICTION_TITLE.fullmatch(first_line))
+            if warning:
+                try:
+                    authored = main.first.locator(
+                        'article, [role="article"], .comments-comment-item, '
+                        '.feed-shared-update-v2, .update-components-text, '
+                        '.pv-about-section, .pv-profile-section').count()
+                except AttributeError:
+                    authored = 0  # Minimal offline page stub.
+                warning = not authored
         else:
-            first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
             warning = len(text) <= 500 and has_stop_signal(first_line)
         if warning:
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
