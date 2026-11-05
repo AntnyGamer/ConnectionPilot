@@ -95,6 +95,45 @@ class SessionProtectionTests(unittest.TestCase):
                 return SimpleNamespace(all=lambda: [])
         check_protection(Page())
 
+    def test_large_main_text_filter_window_is_bounded(self):
+        # A full LinkedIn profile can contain much more than the
+        # 12,000 characters the matching logic actually inspects.
+        from unittest.mock import patch as mock_patch
+        from automation import send_one
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Playwright not installed")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                large = 'a' * 15000
+                document = ("<main><section><h1>Test Example</h1>" +
+                            "<button id='c'>Connect</button><p>" + large +
+                            "</p></section></main>")
+                class MockPage:
+                    url = 'https://www.linkedin.com/in/test-example/'
+                    def goto(self, *args, **kwargs):
+                        page.set_content(document)
+                    def __getattr__(self, key):
+                        return getattr(page, key)
+                url = 'https://www.linkedin.com/in/test-example/'
+                self.store.add(url, 'Test Example', 'policy', 25)
+                captured = []
+                def reject_filter(profile_text, header_text, filters, terms):
+                    captured.append(profile_text)
+                    return False, "Test rejection"
+                with mock_patch('automation.passes_profile_filters', side_effect=reject_filter):
+                    result, _ = send_one(MockPage(), {'url': url, 'name': 'Test Example'},
+                                         self.store, lambda _: None, filters={'min_score': 0})
+                self.assertEqual(result, 'filtered')
+                self.assertEqual(len(captured), 1)
+                self.assertEqual(len(captured[0]), 12000)
+                self.assertFalse(self.store.has_attempt(url))
+            finally:
+                browser.close()
+
     def test_login_or_authwall_after_session_expiry_halts(self):
         for path in ('/login', '/authwall', '/checkpoint', '/challenge'):
             with self.subTest(path=path):
