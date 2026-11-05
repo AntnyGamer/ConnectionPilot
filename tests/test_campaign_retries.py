@@ -233,7 +233,9 @@ class SessionProtectionTests(unittest.TestCase):
         for path in ('/in/login/', '/in/challenge/'):
             page = SimpleNamespace(url='https://www.linkedin.com'+path)
             page.locator = lambda selector: (SimpleNamespace(count=lambda: 0) if selector == 'main'
-                                            else SimpleNamespace(all=lambda: []))
+                                            else SimpleNamespace(
+                                                all=lambda: [],
+                                                filter=lambda **kwargs: SimpleNamespace(all=lambda: [])))
             check_protection(page)
 
 if __name__ == '__main__':
