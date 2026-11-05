@@ -629,6 +629,40 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIsNone(self.db.next_profile())
         self.assertEqual(self.db.setting('page:government'), '2')
 
+    def test_restriction_after_search_hydration_stops_without_more_navigation(self):
+        class LateAnchors:
+            def count(self): return 0
+            @property
+            def first(self):
+                return self
+            def wait_for(self, **kwargs):
+                self_test.page.set_content(
+                    "<main><h1>Your account has been temporarily restricted</h1>"
+                    "<p>LinkedIn has limited automated profile access.</p></main>")
+                raise TimeoutError("Results replaced with restriction page")
+        class SearchPage:
+            url = MOCK_URL
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = 0
+            def goto(self, *args, **kwargs):
+                self.visits += 1
+                self.browser.set_content("<main></main>")
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return LateAnchors()
+                return self.browser.locator(selector)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        self_test = self
+        pg = SearchPage(self.page)
+        with self.assertRaises(ProtectionScreen):
+            collect_results(pg, self.db, ["policy", "government"], ["policy"],
+                            threading.Event(), lambda _: None, 100)
+        self.assertEqual(pg.visits, 1)
+        self.assertEqual(self.db.counts().get("queued", 0), 0)
+        self.assertIsNone(self.db.setting("page:policy"))
+
     def test_long_restriction_page_stops_before_click(self):
         # The exact banner LinkedIn displayed can be surrounded by long
         # explanations that bypass the previous short-text heuristic.
