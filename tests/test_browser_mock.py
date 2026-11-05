@@ -878,6 +878,19 @@ class BrowserMockTests(unittest.TestCase):
             def __getattr__(self, name): return getattr(self.page, name)
         check_protection(LocalPage(self.page))
 
+    def test_long_genuine_restriction_dialog_is_not_missed(self):
+        long_details = "Please review your account security settings. " * 30
+        doc = """<html><body><main><h1>Test Example</h1></main>
+          <div role="dialog"><h2>Your account has been temporarily restricted</h2>
+          <p>""" + long_details + """</p></div></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        with self.assertRaises(ProtectionScreen):
+            check_protection(LocalPage(self.page))
+
     def test_genuine_site_dialog_still_detects_explicit_restriction(self):
         doc = """<html><body><main><h1>Test Example</h1></main>
           <div role="dialog"><h2>Your account is temporarily restricted</h2>
