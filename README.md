@@ -1,8 +1,8 @@
 <img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="96" />
 
-# ConnectionPilot v1 — Windows
+# ConnectionPilot v1.0.6 — Windows
 
-**Version label: v1.** This label remains v1 for future bug fixes; it is not an incrementing release number. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
+**Version: v1.0.6.** App, Windows EXE metadata and GitHub release tag use this same version. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
 
 ## Important limitations
 
@@ -174,13 +174,13 @@ icons for existing taskbar pins; an old pin may retain an earlier image. The
 GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
 that GitHub setting.
-The stable displayed version remains **v1**.
+The displayed version is **v1.0.6**.
 
 The repo also contains a **Windows-only** GitHub Actions build at
 [Actions](https://github.com/AntnyGamer/ConnectionPilot/actions/workflows/windows-build.yml)
 that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
 embeds the icon and version metadata, and verifies the executable. Download
-`ConnectionPilot-v1-Windows-EXE` from the successful workflow's Artifacts.
+`ConnectionPilot-v1.0.6-Windows-EXE` from the successful workflow's Artifacts.
 This is an unsigned executable and Windows SmartScreen may warn; no code
 signing certificate is bundled. The executable uses Chrome/Edge for Google
 sign-in and needs the relevant browser available on your PC.
@@ -195,10 +195,9 @@ confirmed before claiming a tested executable download exists.
 After a successful Windows build on a commit merged to `main`, GitHub Actions
 publishes the verified `ConnectionPilot.exe`, its SHA-256 checksum, and the matching PNG and ICO logo assets on the
 [latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
-Download the EXE from the release page; the desktop version always remains **v1**.
-Each release tag includes a short commit ID (`v1-build-...`) so release assets
-remain tied to their exact audited source rather than silently overwriting a
-previous release. Pull request builds run checks and produce test artifacts but
+Download the EXE from the release page; this release is **v1.0.6**.
+The release tag is `v1.0.6`, bound to the merge commit's verified source.
+The workflow refuses to replace an existing release with a different binary. Pull request builds run checks and produce test artifacts but
 **never** publish a public release. Publishing uses a write-scoped token only
 after a successful Windows test/build job.
 
