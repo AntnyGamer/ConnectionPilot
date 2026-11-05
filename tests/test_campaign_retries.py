@@ -66,6 +66,12 @@ class WorkerRecoveryTests(unittest.TestCase):
                 self.assertFalse(self.store.has_attempt(url))
         self.page.goto.return_value = None
 
+    def test_worker_does_not_query_status_counts_until_goal_reached(self):
+        with patch.object(self.store, "counts",
+                          side_effect=AssertionError("Unexpected idle status scan")), \
+             patch("automation.collect_results", side_effect=StopRun("stop")):
+            self.run_fake()
+
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
         # The app must explicitly enable browser sandboxing on Windows.
