@@ -398,6 +398,7 @@ class BrowserMockTests(unittest.TestCase):
         doc = '<html><body><main>' + '''<div><a href='/in/legislator-1/'>Legislator One</a><p>Policy analyst working for New Jersey government public affairs.</p></div>
           <div><a href='/in/crypto-2/'>Crypto Two</a><p>Politics and cryptocurrency sales manager serving New Jersey business accounts.</p></div>''' + '</main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, p): self.p = p
             def goto(self, *args, **kwargs): self.p.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == "url" else getattr(self.p, key)
@@ -414,6 +415,7 @@ class BrowserMockTests(unittest.TestCase):
           <p>Government public policy analyst working in New Jersey state government</p>
           </div></main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -428,6 +430,7 @@ class BrowserMockTests(unittest.TestCase):
           <p>Government public policy analyst working in New Jersey state government</p>
           </div></main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -485,6 +488,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_page_with_only_unmatched_profiles_advances(self):
         doc = '<html><body><main><div><a href="/in/unmatched-professional/">Unmatched Professional</a><p>Chef working with fresh ingredients in a restaurant.</p></div></main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -500,6 +504,7 @@ class BrowserMockTests(unittest.TestCase):
                <p>Government public policy analyst in New Jersey</p></div>
           </main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -519,6 +524,7 @@ class BrowserMockTests(unittest.TestCase):
             def count(self): return self.anchors.count()
             def nth(self, i): return BrokenAnchor(self.anchors.nth(i))
         class BrokenPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def locator(self, selector):
@@ -620,6 +626,7 @@ class BrowserMockTests(unittest.TestCase):
           <p>1st degree connection. Government public policy analyst working in New Jersey</p>
           </div></main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == 'url' else getattr(self.page, key)
@@ -628,6 +635,23 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(added, 0)
         self.assertIsNone(self.db.next_profile())
         self.assertEqual(self.db.setting('page:government'), '2')
+
+    def test_search_redirect_to_feed_stops_without_processing_links(self):
+        doc = """<main><a href='/in/unrelated-person/'>Unrelated Person</a>
+            <p>Government policy analyst</p></main>"""
+        class RedirectedPage:
+            url = 'https://www.linkedin.com/feed/'
+            def __init__(self, browser):
+                self.browser = browser
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+        with self.assertRaises(StopRun):
+            collect_results(RedirectedPage(self.page), self.db, ['policy'],
+                            ['policy'], threading.Event(), lambda _: None, 100)
+        self.assertEqual(self.db.counts().get('queued', 0), 0)
+        self.assertIsNone(self.db.setting('page:policy'))
 
     def test_restriction_after_search_hydration_stops_without_more_navigation(self):
         class LateAnchors:
@@ -641,7 +665,7 @@ class BrowserMockTests(unittest.TestCase):
                     "<p>LinkedIn has limited automated profile access.</p></main>")
                 raise TimeoutError("Results replaced with restriction page")
         class SearchPage:
-            url = MOCK_URL
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, browser):
                 self.browser = browser
                 self.visits = 0
@@ -692,6 +716,7 @@ class BrowserMockTests(unittest.TestCase):
                  <p>Government public policy analyst in NJ</p></div>
             </main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key):
@@ -712,6 +737,7 @@ class BrowserMockTests(unittest.TestCase):
                  <p>Public policy analyst in New Jersey; degree not shown</p></div>
             </main></body></html>"""
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key):
@@ -778,6 +804,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_zero_new_matches_advances_to_later_search_page(self):
         doc = '<html><body><main><div><a href="/in/known-person/">Known Person</a><p>Government political affairs adviser in New Jersey</p></div></main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, p): self.p = p
             def goto(self, *args, **kwargs): self.p.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == "url" else getattr(self.p, key)
@@ -921,6 +948,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_bad_profile_name_link_not_queued(self):
         doc = '<html><body><main><div><a href="/in/legislator/">View profile</a><p>Government policy and public affairs expert.</p></div></main></body></html>'
         class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): self.page.set_content(doc)
             def __getattr__(self, key):
