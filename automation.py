@@ -54,16 +54,30 @@ def check_protection(page):
     if any(path == prefix or path.startswith(prefix + "/") for prefix in
            ("/login", "/authwall", "/checkpoint", "/challenge", "/uas", "/login-submit")):
         raise ProtectionScreen("LinkedIn displayed a sign-in, checkpoint or verification page")
-    # Locate only headings whose complete text matches the restriction notice.
-    # Filtering in the browser avoids reading every profile heading and, unlike
-    # the old first-20 cutoff, cannot miss a warning later in the page.
+    # Profile bios, posts, articles and comments can quote the exact account
+    # warning. On content pages, only site-owned alerts or direct body-level
+    # headings are evidence of an account warning; ordinary main/article
+    # headings are not. Checkpoints are handled by their URL above.
+    content_page = (normalize_profile(page.url) is not None or
+                    any(path == p or path.startswith(p + "/") for p in
+                        ("/feed", "/search", "/posts", "/pulse", "/articles",
+                         "/groups", "/company", "/news")))
+    # Match the complete official title rather than a keyword in a bio.
     restricted = page.locator('h1, h2, h3, h4, h5, h6, [role="heading"]').filter(
         has_text=re.compile(
             r"^\s*(?:Your account has been (?:temporarily |permanently )?restricted"
             r"(?: as a precaution)?|Your account is temporarily restricted|"
             r"Access to your account has been temporarily restricted|"
             r"We['’]ve restricted your account temporarily)\s*$", re.I))
-    if any(h.is_visible() for h in restricted.all()):
+    for heading in restricted.all():
+        if not heading.is_visible():
+            continue
+        if content_page and not heading.evaluate("""el => {
+            const shell = el.closest('[role="alert"], [role="alertdialog"], '
+                                   '.artdeco-toast-item, .artdeco-inline-feedback');
+            return Boolean(shell) || el.parentElement === document.body;
+        }"""):
+            continue
         raise ProtectionScreen(
             "LinkedIn reports that this account is restricted; stop automated access")
     # A member's biography, activity, or job history can legitimately mention
@@ -75,7 +89,20 @@ def check_protection(page):
         'body > p, body > h1, body > h2'
     )
     for surface in warning_surfaces.all()[:50]:
-        if surface.is_visible() and has_stop_signal(surface.inner_text(timeout=3000)):
+        if not surface.is_visible():
+            continue
+        # Ignore a role="alert" or a copied notice embedded in a member's
+        # article/comment. Site warning UI is not part of user-authored text.
+        try:
+            inside_member_content = surface.evaluate("""el => Boolean(el.closest(
+                'article, [role="article"], .feed-shared-update-v2, '
+                '.comments-comment-item, .update-components-text, '
+                '.pv-about-section, .pv-profile-section'))""")
+        except AttributeError:
+            inside_member_content = False  # Lightweight offline fake locator.
+        if inside_member_content:
+            continue
+        if has_stop_signal(surface.inner_text(timeout=3000)):
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
     # Some warnings have no dialog/alert role. A short standalone notice
     # may be the entire main region; do not scan a full profile biography.
@@ -91,19 +118,13 @@ def check_protection(page):
             }""", timeout=3000).strip()
         except AttributeError:
             text = main.first.inner_text(timeout=3000).strip()
-        if normalize_profile(page.url) is None:
+        if content_page:
+            # A short feed post or profile section can also start with an
+            # exact copied notice. A main-text match is not sufficient here.
+            warning = False
+        else:
             first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
             warning = len(text) <= 500 and has_stop_signal(first_line)
-        else:
-            explicit = ("you've reached the invitation limit",
-                        "you've reached the weekly invitation limit",
-                        "invitation limit reached", "you're out of invitations",
-                        "your account has been restricted",
-                        "your account has been temporarily restricted", "too many invitations")
-            warning = len(text) <= 250 and any(
-                line.strip().casefold().replace("’", "'").startswith(explicit)
-                for line in text.splitlines()
-            )
         if warning:
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
