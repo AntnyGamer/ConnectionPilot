@@ -2,9 +2,10 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from google_login import LOGIN_URL, browser_profile, open_google_signin, find_browser
+from google_login import LOGIN_URL, browser_profile, open_google_signin, close_google_signin, find_browser
+import main
 from automation import browser_launch_settings
 
 
@@ -31,7 +32,9 @@ class GoogleLoginTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             with patch('google_login.find_browser', return_value=('chrome', 'C:/Chrome/chrome.exe')):
                 with patch('google_login.subprocess.Popen') as popen:
-                    self.assertEqual(open_google_signin(Path(tmp)), 'chrome')
+                    channel, launched = open_google_signin(Path(tmp))
+                    self.assertEqual(channel, 'chrome')
+                    self.assertIs(launched, popen.return_value)
             args = popen.call_args.args[0]
             self.assertEqual(args[0], 'C:/Chrome/chrome.exe')
             self.assertIn('--new-window', args)
@@ -44,12 +47,103 @@ class GoogleLoginTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             with patch('google_login.find_browser', return_value=('msedge', 'C:/Edge/msedge.exe')):
                 with patch('google_login.subprocess.Popen') as popen:
-                    self.assertEqual(open_google_signin(Path(tmp)), 'msedge')
+                    channel, launched = open_google_signin(Path(tmp))
+                    self.assertEqual(channel, 'msedge')
+                    self.assertIs(launched, popen.return_value)
             args = popen.call_args.args[0]
             self.assertIn('google-login-msedge', args[1])
             path, opts = browser_launch_settings(Path(tmp), 'msedge')
             self.assertTrue(path.endswith('google-login-msedge'))
             self.assertEqual(opts['channel'], 'msedge')
+
+    def test_windows_close_ends_only_the_owned_signin_process_tree(self):
+        process = MagicMock()
+        process.pid = 1457
+        process.poll.return_value = None
+        with patch("google_login.sys.platform", "win32"), \
+             patch("google_login.subprocess.run") as run:
+            close_google_signin(process)
+        run.assert_called_once()
+        args, kwargs = run.call_args
+        self.assertEqual(args[0], ["taskkill", "/PID", "1457", "/T"])
+        self.assertEqual(kwargs["timeout"], 4)
+        process.wait.assert_called_once_with(timeout=2)
+
+    def test_windows_close_forces_tree_only_after_graceful_timeout(self):
+        import subprocess
+        process = MagicMock()
+        process.pid = 1458
+        process.poll.return_value = None
+        process.wait.side_effect = [subprocess.TimeoutExpired("taskkill", 2), None]
+        with patch("google_login.sys.platform", "win32"), \
+             patch("google_login.subprocess.run") as run:
+            close_google_signin(process)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].args[0],
+                         ["taskkill", "/PID", "1458", "/T"])
+        self.assertEqual(run.call_args_list[1].args[0],
+                         ["taskkill", "/PID", "1458", "/T", "/F"])
+        self.assertEqual(process.wait.call_count, 2)
+
+    def test_already_closed_signin_browser_never_gets_killed(self):
+        process = MagicMock()
+        process.poll.return_value = 0
+        with patch("google_login.subprocess.run") as run:
+            close_google_signin(process)
+        run.assert_not_called()
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+
+    def test_app_close_releases_owned_login_process_before_destroy(self):
+        app = main.App.__new__(main.App)
+        app.root = MagicMock()
+        app.signin_process = MagicMock()
+        app.running = False
+        app.closing = False
+        app.worker = None
+        with patch("main.close_google_signin") as cleanup:
+            app.close()
+        cleanup.assert_called_once()
+        app.root.destroy.assert_called_once()
+        self.assertIsNone(app.signin_process)
+        self.assertTrue(app.closing)
+
+    def test_app_waits_for_automation_worker_before_finishing_close(self):
+        app = main.App.__new__(main.App)
+        app.root = MagicMock()
+        proc = MagicMock()
+        app.signin_process = proc
+        app.worker = MagicMock()
+        app.worker.is_alive.side_effect = [True, False]
+        app.running = True
+        app.closing = False
+        app.stop_event = MagicMock()
+        app.pause_event = MagicMock()
+        app.status = MagicMock()
+        for field in ("start_btn", "pause_btn", "stop_btn"):
+            setattr(app, field, MagicMock())
+        with patch("main.messagebox.askyesno", return_value=True), \
+             patch("main.close_google_signin") as cleanup:
+            app.close()
+            app.stop_event.set.assert_called_once()
+            app.root.destroy.assert_not_called()
+            app.finish_close()
+            cleanup.assert_not_called()
+            app.root.destroy.assert_not_called()
+            app.finish_close()
+            cleanup.assert_called_once_with(proc)
+        app.root.destroy.assert_called_once()
+
+    def test_repeated_signin_click_does_not_launch_second_browser(self):
+        app = main.App.__new__(main.App)
+        app.running = False
+        app.signin_process = MagicMock()
+        app.signin_process.poll.return_value = None
+        with patch("main.open_google_signin") as launch, \
+             patch("main.messagebox.showinfo") as info:
+            app.google_signin()
+        launch.assert_not_called()
+        info.assert_called_once()
 
     def test_prefers_standard_install_over_path_binary(self):
         with patch('google_login.shutil.which', return_value='C:/Temp/chrome.exe'):
