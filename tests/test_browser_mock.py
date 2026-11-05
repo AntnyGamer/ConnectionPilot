@@ -705,6 +705,41 @@ class BrowserMockTests(unittest.TestCase):
         result, reason = self.run_mock(doc)
         self.assertEqual(result, 'sent', reason)
 
+    def test_processed_generic_link_does_not_mask_new_unnamed_member(self):
+        known = 'https://www.linkedin.com/in/known-member/'
+        self.db.add(known, 'Known Member', 'policy', 25)
+        self.db.mark(known, 'skipped', 'Already connected')
+        doc = """<html><body><main>
+          <div><a href='/in/known-member/'>View profile</a></div>
+          <div><a href='/in/new-unnamed-member/' aria-label='View profile'>View profile</a></div>
+          </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return getattr(self.page, key)
+        messages = []
+        added = collect_results(SearchPage(self.page), self.db, ['government'],
+                                ['policy'], threading.Event(), messages.append, 100)
+        self.assertEqual(added, 0)
+        self.assertEqual(self.db.setting('page:government', '1'), '1')
+        self.assertIn('no member names', ' '.join(messages))
+
+    def test_page_of_only_processed_generic_links_can_advance(self):
+        known = 'https://www.linkedin.com/in/known-member/'
+        self.db.add(known, 'Known Member', 'policy', 25)
+        self.db.mark(known, 'skipped', 'Already connected')
+        doc = "<html><body><main><a href='/in/known-member/'>View profile</a></main></body></html>"
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return getattr(self.page, key)
+        added = collect_results(SearchPage(self.page), self.db, ['government'],
+                                ['policy'], threading.Event(), lambda _: None, 100)
+        self.assertEqual(added, 0)
+        self.assertEqual(self.db.setting('page:government'), '2')
+
     def test_processed_search_members_are_not_reinspected(self):
         known = 'https://www.linkedin.com/in/processed-person/'
         self.db.add(known, 'Processed Person', 'government policy', 50)
