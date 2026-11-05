@@ -273,7 +273,10 @@ def _profile_intro(page, expected_name):
             return None, "Name mismatch: page title identifies another member; nothing clicked."
 
     matching = []
-    for selector in ('h1, h2, [role="heading"]', 'h3'):
+    # Prefer the primary profile heading over repeated name copies in
+    # lower-level headings. Two matching headings at the same level remain
+    # ambiguous and must not be guessed.
+    for selector in ('h1', 'h2, [role="heading"]:not(h1)', 'h3'):
         matching = [heading for heading in main.locator(selector).all()[:60]
                     if not heading.locator("xpath=ancestor::aside").count()
                     and heading.is_visible()
@@ -305,7 +308,8 @@ def _profile_intro(page, expected_name):
         if current.evaluate('el => el.tagName.toLowerCase() === "main"'):
             break
         actions = current.get_by_role("button", name=re.compile(
-            r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I))
+            r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I)).or_(
+            current.get_by_role("link", name=re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I)))
         if any(action.is_visible() for action in actions.all()):
             # Never widen the panel into a sidebar or another person's card.
             # If there was a verified smaller panel, its More action is still
@@ -320,7 +324,8 @@ def _profile_intro(page, expected_name):
                     None, "Action panel contains a sidebar; nothing clicked.")
 
             connects = current.get_by_role("button", name=re.compile(
-                r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I))
+                r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I)).or_(
+                current.get_by_role("link", name=re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I)))
             direct = [button for button in connects.all() if button.is_visible()]
             if len(direct) > 1:
                 return None, "Multiple visible Connect controls; nothing clicked."
@@ -346,6 +351,8 @@ def find_first_action(intro, name):
     pattern = (re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I) if name == "Connect"
                else re.compile(r"^" + re.escape(name) + (r"(?: actions)?$" if name == "More" else r"$"), re.I))
     buttons = intro.get_by_role("button", name=pattern)
+    if name == "Connect":
+        buttons = buttons.or_(intro.get_by_role("link", name=pattern))
     matches = [button for button in buttons.all() if button.is_visible()]
     return matches[0] if len(matches) == 1 else None
 
@@ -454,8 +461,10 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             menu_action = re.compile(r"^(?:Connect|Invite .* to connect)$", re.I)
             # Some LinkedIn menus expose their option as a button rather than
             # an ARIA menuitem. Only include buttons inside a real menu.
+            menu = page.get_by_role("menu")
             candidates = page.get_by_role("menuitem", name=menu_action).or_(
-                page.get_by_role("menu").get_by_role("button", name=menu_action))
+                menu.get_by_role("button", name=menu_action)).or_(
+                menu.get_by_role("link", name=menu_action))
             try:
                 candidates.first.wait_for(state="visible", timeout=1600)
             except Exception:
