@@ -37,12 +37,12 @@ class WorkerRecoveryTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_fake(self):
+    def run_fake(self, expected_error=StopRun):
         with patch('playwright.sync_api.sync_playwright', return_value=self.manager), \
              patch('automation.check_protection'), \
              patch('automation.local_now', return_value=datetime(2026, 11, 2, 10, tzinfo=TZ)), \
              patch('automation.wait_or_stop') as sleeper:
-            with self.assertRaises(StopRun):
+            with self.assertRaises(expected_error):
                 run_campaign(self.store, self.config, self.stop, self.pause, self.status.append, lambda: None)
             return sleeper.call_count
 
@@ -97,7 +97,7 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.store.add(url, f"Restricted {i}", "policy", 25)
         with patch('automation.send_one', side_effect=ProtectionScreen(
                 'LinkedIn reports that this account is restricted')) as send:
-            self.run_fake()
+            self.run_fake(ProtectionScreen)
         self.assertEqual(send.call_count, 1)
         self.assertEqual(self.store.counts().get("queued"), 2)
         self.assertEqual(self.store.total_attempts(), 0)
