@@ -136,6 +136,7 @@ class Store:
                     OR reason LIKE 'Name mismatch: couldn''t identify one verified profile heading; nothing clicked.%'
                     OR reason LIKE 'Verified profile name, but couldn''t locate its own action panel.%'
                     OR reason LIKE 'No Connect option in verified profile introduction.%'
+                    OR reason LIKE 'No unambiguous Connect menu action.%'
                   )""", (self._now(),))
             return cur.rowcount
 
