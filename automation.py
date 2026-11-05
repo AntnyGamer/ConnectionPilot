@@ -407,7 +407,10 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     if normalize_profile(page.url) != url:
         return "skipped", "Opened URL does not match the discovered profile; nothing clicked."
     header, error = _profile_intro(page, profile["name"])
-    if header is None and not error.startswith("Name mismatch: page title"):
+    # LinkedIn may render the previous profile's title briefly after a
+    # navigation. Recheck any pre-click mismatch against the same verified
+    # URL rather than treating a transient title as a final identity verdict.
+    if header is None:
         for _ in range(5):
             page.wait_for_timeout(400)
             check_protection(page)
