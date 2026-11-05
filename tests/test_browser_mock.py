@@ -813,6 +813,22 @@ class BrowserMockTests(unittest.TestCase):
                 self.assertEqual(result, 'sent', reason)
                 self.assertEqual(self.page.locator("#connect").inner_text(), "Pending")
 
+    def test_pasted_heading_with_alert_role_inside_article_is_not_site_warning(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section>
+          <article><div role="alertdialog">
+            <h2>Your account has been temporarily restricted</h2>
+            <p>A quoted message from last week.</p>
+          </div></article></main></body></html>"""
+        self.page.set_content(doc)
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def __getattr__(self, name): return getattr(self.page, name)
+        check_protection(LocalPage(self.page))
+
     def test_quoted_restriction_alert_inside_article_is_not_site_warning(self):
         doc = """<html><body><main>
           <section><h1>Test Example</h1>
