@@ -792,6 +792,58 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.counts().get("queued", 0), 0)
         self.assertIsNone(self.db.setting("page:policy"))
 
+    def test_pasted_restriction_heading_in_blog_and_comments_is_not_account_warning(self):
+        # Even an exact h1-h6 notice inside member-authored content must not
+        # stop a healthy session before reaching its verified Connect button.
+        posts = (
+            "<article><h2>Your account has been temporarily restricted</h2>"
+            "<p>I received this warning last year.</p></article>",
+            "<div class='comments-comment-item'><h4>Your account is temporarily restricted</h4>"
+            "<p>Here is what my friend received.</p></div>",
+            "<section class='pv-about-section'><h6>Access to your account has been temporarily restricted</h6></section>",
+            "<div class='feed-shared-update-v2'><h1>We've Restricted Your Account Temporarily</h1></div>",
+        )
+        for post in posts:
+            with self.subTest(post=post[:70]):
+                doc = """<html><body><main>
+                  <section><h1>Test Example</h1>
+                    <button id="connect" onclick="this.textContent='Pending'">Connect</button></section>""" + post + """
+                  </main></body></html>"""
+                result, reason = self.run_mock(doc)
+                self.assertEqual(result, 'sent', reason)
+                self.assertEqual(self.page.locator("#connect").inner_text(), "Pending")
+
+    def test_quoted_restriction_alert_inside_article_is_not_site_warning(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section>
+          <article><div role='alert'>Your account has been temporarily restricted</div></article>
+          </main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, "sent", reason)
+
+    def test_real_restriction_dialog_stops_even_on_profile_page(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section></main>
+          <div role='alertdialog'><h4>Your account is temporarily restricted</h4></div>
+          </body></html>"""
+        with self.assertRaises(ProtectionScreen):
+            self.run_mock(doc)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator("#connect").inner_text(), "Connect")
+
+    def test_pasted_standalone_warning_in_short_member_main_is_not_a_block(self):
+        doc = """<html><body><main>
+          <section><h1>Test Example</h1>
+            <p>Your account has been temporarily restricted</p>
+            <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </section></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, "sent", reason)
+
     def test_documented_restriction_titles_halt_before_invitation(self):
         # These are documented visible variants, not claims about LinkedIn's
         # current production HTML heading tags.
@@ -805,7 +857,7 @@ class BrowserMockTests(unittest.TestCase):
         for index, title in enumerate(titles):
             with self.subTest(title=title):
                 heading = ("h1", "h2", "h4", "h5", "h6")[index]
-                doc = html(f"<{heading}>{title}</{heading}>"
+                doc = html(f"<div role='alertdialog'><{heading}>{title}</{heading}></div>"
                            "<button id='connect' onclick=\"this.textContent='Pending'\">Connect</button>")
                 with self.assertRaises(ProtectionScreen):
                     self.run_mock(doc)
@@ -815,7 +867,7 @@ class BrowserMockTests(unittest.TestCase):
     def test_h4_and_h6_restriction_headings_stop_before_click(self):
         for tag in ("h4", "h6"):
             with self.subTest(tag=tag):
-                doc = html(f"""<{tag}>Your account has been temporarily restricted</{tag}>
+                doc = html(f"""<div role="alertdialog"><{tag}>Your account has been temporarily restricted</{tag}></div>
                     <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
                 with self.assertRaises(ProtectionScreen):
                     self.run_mock(doc)
@@ -824,7 +876,7 @@ class BrowserMockTests(unittest.TestCase):
 
     def test_late_h3_restriction_heading_stops_even_after_many_headings(self):
         earlier = "".join(f"<h3>Other member section {i}</h3>" for i in range(40))
-        doc = html(earlier + """<h3>Your account has been temporarily restricted</h3>
+        doc = html(earlier + """<div role="alertdialog"><h3>Your account has been temporarily restricted</h3></div>
           <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
         with self.assertRaises(ProtectionScreen):
             self.run_mock(doc)
@@ -847,8 +899,8 @@ class BrowserMockTests(unittest.TestCase):
         # The exact banner LinkedIn displayed can be surrounded by long
         # explanations that bypass the previous short-text heuristic.
         long_text = 'LinkedIn asks users to review extensions. ' * 30
-        doc = html("""<h2>Your account has been temporarily restricted</h2>
-            <p>""" + long_text + """</p>
+        doc = html("""<div role="alertdialog"><h2>Your account has been temporarily restricted</h2>
+            <p>""" + long_text + """</p></div>
             <button id='connect' onclick="this.textContent='Pending'">Connect</button>""")
         with self.assertRaises(ProtectionScreen):
             self.run_mock(doc)
@@ -1009,7 +1061,7 @@ class BrowserMockTests(unittest.TestCase):
 
     def test_restriction_halts(self):
         with self.assertRaises(ProtectionScreen):
-            self.run_mock(html('<p>You’ve reached the invitation limit</p>'))
+            self.run_mock(html('<div role="alert">You’ve reached the invitation limit</div>'))
 
     def test_unknown_modal_is_uncertain(self):
         doc = html('''<button onclick="document.getElementById('d').hidden=false">Connect</button>''', '''
