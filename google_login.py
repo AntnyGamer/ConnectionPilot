@@ -49,7 +49,7 @@ def find_browser():
 def open_google_signin(data_dir: Path):
     """Open LinkedIn login in a real browser with a separate persistent profile.
 
-    Returns the channel to be used *after the human closes the login browser*.
+    Returns (channel, owned_process) for later sign-in cleanup.
     """
     channel, executable = find_browser()
     profile = browser_profile(data_dir, channel)
