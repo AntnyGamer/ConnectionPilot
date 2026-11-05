@@ -80,12 +80,20 @@ def search_result_name(text: str, label: str = "") -> str | None:
 
 
 def names_match(discovered: str, displayed: str) -> bool:
-    """Require matching full names, allowing only common display decorations."""
+    """Compare one person's name without mistaking credentials for identity."""
     def normalized(value):
+        value = (value or "").strip()
+        # LinkedIn result links sometimes append a connection badge. Never
+        # mistake it for a part of the member's name.
+        value = re.split(r"\s+[·•]\s+(?=(?:1st|2nd|3rd|premium|verified)\b)",
+                         value, maxsplit=1, flags=re.I)[0]
         value = re.sub(
             r"\s*\((?:he|him|she|her|they|them)(?:\s*/\s*(?:he|him|she|her|they|them))+\)\s*$",
-            "", value or "", flags=re.I
-        )
+            "", value, flags=re.I)
+        # Only remove unambiguous professional credentials. Keep Jr./Sr. and
+        # numerals; they distinguish real people with otherwise equal names.
+        credential = r"(?:esq\.?|esquire|j\.?\s*d\.?|ll\.?\s*m\.?|m\.?\s*b\.?\s*a\.?|ph\.?\s*d\.?|m\.?\s*d\.?|cpa|pmp)"
+        value = re.sub(r"(?:\s*,?\s+" + credential + r")+\s*$", "", value, flags=re.I)
         value = unicodedata.normalize("NFKD", value).casefold()
         value = "".join(c for c in value if not unicodedata.combining(c))
         words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
@@ -93,9 +101,22 @@ def names_match(discovered: str, displayed: str) -> bool:
                     "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
         while len(words) >= 3 and words[0] in prefixes:
             words.pop(0)
-        return " ".join(words)
+        return words
+
     expected, actual = normalized(discovered), normalized(displayed)
-    return bool(expected) and expected == actual
+    if not expected or not actual:
+        return False
+    if expected == actual:
+        return True
+    # Expand a middle initial only when *both* names give one: Sarah E.
+    # Jones and Sarah Elizabeth Jones can be the same person, but Sarah
+    # Jones and Sarah E. Jones remain ambiguous and must not be guessed.
+    if len(expected) != len(actual) or len(expected) < 3:
+        return False
+    if expected[0] != actual[0] or expected[-1] != actual[-1]:
+        return False
+    return all(a == b or (min(len(a), len(b)) == 1 and a[0] == b[0])
+               for a, b in zip(expected[1:-1], actual[1:-1]))
 
 
 def match_score(snippet: str, terms: list[str] | None = None) -> int:

@@ -67,6 +67,16 @@ class LogicTests(unittest.TestCase):
         self.assertTrue(names_match("李 小龙", "李 小龙"))
         self.assertFalse(names_match("李 小龙", "王 小龙"))
 
+    def test_professional_suffixes_and_middle_initials_match_safely(self):
+        self.assertTrue(names_match("Sarah E Jones, Esq.", "Sarah E. Jones"))
+        self.assertTrue(names_match("Sarah E. Jones, Esq. · 2nd", "Sarah Elizabeth Jones"))
+        self.assertTrue(names_match("Dr. Sarah E Jones, J.D.", "Sarah E Jones"))
+        self.assertTrue(names_match("Sarah E Jones Ph.D.", "Sarah E Jones"))
+        self.assertFalse(names_match("Sarah E Jones, Esq.", "Sarah A Jones"))
+        self.assertFalse(names_match("Sarah E Jones", "Sarah Jones"))
+        self.assertFalse(names_match("John Smith Jr.", "John Smith Sr."))
+        self.assertFalse(names_match("Sarah E Jones (Former)", "Sarah E Jones"))
+
     def test_name_validation(self):
         self.assertTrue(names_match('José de la Cruz', 'Jose de la Cruz'))
         self.assertFalse(names_match('Jane Public', 'John Public'))
@@ -191,6 +201,56 @@ class StorageTests(unittest.TestCase):
             row = conn.execute('SELECT status FROM profiles WHERE url=?', (attempted,)).fetchone()
         self.assertEqual(row[0], 'filtered')
         self.assertTrue(self.db.has_attempt(attempted))
+
+    def test_retry_safe_skips_keeps_attempt_history_and_real_nonmatches(self):
+        base = 'https://www.linkedin.com/in/'
+        cases = {
+            'name': "Name mismatch: couldn't identify one verified profile heading; nothing clicked.",
+            'menu': "No unambiguous Connect menu action.",
+            'no-control': "No Connect option in verified profile introduction.",
+            'disabled': "Connect action is unavailable; nothing clicked.",
+        }
+        for slug, reason in cases.items():
+            url = base + slug + '/'
+            self.db.add(url, slug, 'policy', 25)
+            self.db.mark(url, 'skipped', reason)
+        connected = base + 'connected/'
+        self.db.add(connected, 'Connected', 'policy', 25)
+        self.db.mark(connected, 'skipped', 'Already a first-degree connection; no invitation needed.')
+        attempted = base + 'attempted/'
+        self.db.add(attempted, 'Attempted', 'policy', 25)
+        self.db.mark(attempted, 'uncertain', 'Potential invitation')
+        self.db.mark(attempted, 'skipped', cases['menu'])
+        self.assertEqual(self.db.retry_safe_skips(), len(cases))
+        self.assertEqual(self.db.retry_safe_skips(), 0)
+        self.assertTrue(self.db.has_attempt(attempted))
+        self.assertEqual(self.db.total_attempts(), 1)
+        self.assertEqual(self.db.counts().get('queued'), len(cases))
+        self.assertEqual(self.db.counts().get('skipped'), 2)
+
+    def test_clear_campaign_data_is_explicit_and_keeps_preference_settings(self):
+        url = 'https://www.linkedin.com/in/confirmed-person/'
+        self.db.add(url, 'Confirmed Person', 'policy', 80)
+        self.db.mark(url, 'uncertain', 'Possible invitation')
+        self.db.mark(url, 'sent', 'Confirmed')
+        self.db.log('sent', 'Confirmed Person')
+        self.db.set_setting('page:politics', '7')
+        self.db.set_setting('inspect_fail:' + url, '2')
+        self.db.set_setting('run:matching', 'old')
+        self.db.set_setting('ui:searches', 'politics')
+        self.db.set_setting('ui:matches', 'policy')
+        self.db.set_setting('ui:daily', '100')
+        self.db.set_setting('ui:browser_channel', 'chrome')
+        self.assertEqual(self.db.total_attempts(), 1)
+        self.db.clear_campaign_data()
+        self.assertEqual(self.db.dashboard_stats(), ({}, 0, 0, 0))
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.history(), [])
+        for key in ('page:politics', 'inspect_fail:' + url, 'run:matching',
+                    'ui:searches', 'ui:matches'):
+            self.assertIsNone(self.db.setting(key))
+        self.assertEqual(self.db.setting('ui:daily'), '100')
+        self.assertEqual(self.db.setting('ui:browser_channel'), 'chrome')
 
     def test_dashboard_snapshot_matches_individual_counters(self):
         a = 'https://www.linkedin.com/in/dashboard-a/'

@@ -15,7 +15,7 @@ from tkinter import messagebox, ttk
 
 from automation import ProtectionScreen, StopRun, run_campaign
 from google_login import open_google_signin
-from logic import (DEFAULT_MATCH_TERMS, DEFAULT_SEARCHES, FILTER_FIELDS,
+from logic import (FILTER_FIELDS,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
                    valid_cooldown_seconds, safe_saved_int)
 from storage import Store
@@ -146,13 +146,13 @@ class App:
         self.search_box = tk.Text(panel, height=5, bg="#fbfdff", fg=COLORS["ink"],
                                   font=("Segoe UI", 9), relief="solid", bd=1, wrap="word")
         self.search_box.pack(fill="x", pady=(4, 10))
-        self.search_box.insert("1.0", STORE.setting("ui:searches", "\n".join(DEFAULT_SEARCHES)))
+        # Start empty on every launch, even with an existing user data folder.
 
         ttk.Label(panel, text="Relevant profile terms (comma-separated)", style="Card.TLabel").pack(anchor="w")
         self.match_box = tk.Text(panel, height=2, bg="#fbfdff", fg=COLORS["ink"],
                                  font=("Segoe UI", 9), relief="solid", bd=1, wrap="word")
         self.match_box.pack(fill="x", pady=(4, 8))
-        self.match_box.insert("1.0", STORE.setting("ui:matches", ", ".join(DEFAULT_MATCH_TERMS)))
+        # Never automatically fill in saved terms or built-in suggested terms.
 
         self.filters = self.load_filters()
         filter_row = ttk.Frame(panel, style="Card.TFrame")
@@ -187,6 +187,14 @@ class App:
 
         self.stats = tk.StringVar(value="Loading progress…")
         ttk.Label(panel, textvariable=self.stats, style="Card.TLabel").pack(anchor="w", pady=(6, 7))
+        progress_actions = ttk.Frame(panel, style="Card.TFrame")
+        progress_actions.pack(fill="x", pady=(0, 7))
+        self.retry_btn = ttk.Button(progress_actions, text="Retry safe skips",
+                                    command=self.retry_skips)
+        self.retry_btn.pack(side="left")
+        self.reset_btn = ttk.Button(progress_actions, text="Clear campaign data…",
+                                    command=self.clear_campaign)
+        self.reset_btn.pack(side="left", padx=(9, 0))
         self.status = tk.StringVar(value="Ready. For Google accounts, click Sign in with Google first.")
         status_label = tk.Label(panel, textvariable=self.status, bg="#edf5fd", fg=COLORS["ink"],
                                 wraplength=690, justify="left", anchor="w", padx=10, pady=8)
@@ -313,6 +321,37 @@ class App:
                        f"Skipped: {counts.get('skipped', 0)}    Unconfirmed: {counts.get('uncertain', 0)}    "
                        f"Today: {confirmed} confirmed / {possible} possible")
 
+    def retry_skips(self):
+        if self.running:
+            return
+        count = STORE.retry_safe_skips()
+        self.refresh()
+        self.status.set(f"Requeued {count} safe pre-click skips. Previously attempted invitations remain protected.")
+        self.put_log(f"Requeued {count} safe pre-click skips.")
+
+    def clear_campaign(self):
+        if self.running:
+            return
+        if not messagebox.askyesno(
+            "Clear all campaign data?",
+            "This deletes the local candidate list, skipped/filtered statuses, "
+            "invitation attempt history, and the counters displayed above.\n\n"
+            "This DOES NOT undo invitations on LinkedIn or reset LinkedIn's limits. "
+            "Without local attempt history, ConnectionPilot may contact the same "
+            "people again.\n\nContinue?",
+            parent=self.root,
+            icon="warning"
+        ):
+            return
+        STORE.clear_campaign_data()
+        self.search_box.delete("1.0", "end")
+        self.match_box.delete("1.0", "end")
+        self.log_widget.configure(state="normal")
+        self.log_widget.delete("1.0", "end")
+        self.log_widget.configure(state="disabled")
+        self.refresh()
+        self.status.set("Local campaign data cleared. LinkedIn invitation history and limits are unchanged.")
+
     def emit(self, kind, data=""):
         self.events.put((kind, data))
 
@@ -331,6 +370,8 @@ class App:
                     self.running = False
                     self.start_btn.configure(state="normal")
                     self.signin_btn.configure(state="normal")
+                    self.retry_btn.configure(state="normal")
+                    self.reset_btn.configure(state="normal")
                     self.pause_btn.configure(state="disabled", text="Pause")
                     self.stop_btn.configure(state="disabled")
                     self.pause_event.clear()
@@ -402,6 +443,8 @@ class App:
         self.running = True
         self.start_btn.configure(state="disabled")
         self.signin_btn.configure(state="disabled")
+        self.retry_btn.configure(state="disabled")
+        self.reset_btn.configure(state="disabled")
         self.pause_btn.configure(state="normal", text="Pause")
         self.stop_btn.configure(state="normal")
         config = {"target": target, "daily_limit": daily, "cooldown": cooldown,

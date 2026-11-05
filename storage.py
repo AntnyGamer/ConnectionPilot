@@ -115,6 +115,38 @@ class Store:
                   AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
                 (self._now(),))
 
+    def retry_safe_skips(self):
+        """Requeue pre-click layout misses, never recorded invitation attempts."""
+        with self._conn() as db:
+            cur = db.execute("""UPDATE profiles
+                SET status='queued', reason='', updated_at=?
+                WHERE status='skipped'
+                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)
+                  AND (
+                    reason LIKE 'Name mismatch:%'
+                    OR reason LIKE 'Verified profile name, but couldn''t locate its own action panel.%'
+                    OR reason LIKE 'No Connect option in verified profile introduction.%'
+                    OR reason LIKE 'No unambiguous Connect menu action.%'
+                    OR reason LIKE 'Connect action is unavailable;%'
+                    OR reason LIKE 'Multiple visible Connect controls;%'
+                  )""", (self._now(),))
+            return cur.rowcount
+
+    def clear_campaign_data(self):
+        """Explicitly clear local counters, leads and attempt ledger.
+
+        Removing the ledger allows previously contacted people to be selected
+        again; this must only be called from an explicitly confirmed UI action.
+        Browser login profiles and unrelated user preferences are untouched.
+        """
+        with self._conn() as db:
+            db.execute("DELETE FROM attempts")
+            db.execute("DELETE FROM profiles")
+            db.execute("DELETE FROM events")
+            db.execute("""DELETE FROM settings WHERE key LIKE 'page:%'
+                OR key LIKE 'inspect_fail:%'
+                OR key IN ('run:matching', 'ui:searches', 'ui:matches')""")
+
     def setting(self, key, default=None):
         with self._conn() as db:
             row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
