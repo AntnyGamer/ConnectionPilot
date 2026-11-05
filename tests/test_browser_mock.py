@@ -80,6 +80,64 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
         self.assertEqual(self.page.locator('aside button').inner_text(), 'Connect')
 
+    def test_direct_connect_beside_more_uses_direct_button(self):
+        # More is beside the verified name, while Connect is in a sibling.
+        # The old selector stopped at the More-only wrapper and skipped.
+        doc = """<html><head><title>Test Example | LinkedIn</title></head>
+          <body><main><div class='intro'>
+          <div class='identity'><h2>Test Example</h2>
+          <button id='more' onclick="this.dataset.clicked='yes'">More</button></div>
+          <div class='controls'><button id='connect'
+            onclick="this.textContent='Pending'">Connect</button></div>
+          </div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+        self.assertIsNone(self.page.locator('#more').get_attribute('data-clicked'))
+
+    def test_named_direct_connect_beside_more(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head>
+          <body><main><section><div><h2>Test Example</h2><button id='more'
+          onclick="this.dataset.clicked='yes'">More</button></div>
+          <div><button id='connect' aria-label='Connect with Test Example'
+          onclick="this.textContent='Pending'">Connect</button></div>
+          </section></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+        self.assertIsNone(self.page.locator('#more').get_attribute('data-clicked'))
+
+    def test_more_menu_still_works_without_direct_connect(self):
+        doc = html("""<button id='more' onclick="document.getElementById('menu').hidden=false">More</button>
+          <div role='menu' id='menu' hidden><div role='menuitem' id='menu-connect'
+            onclick="document.getElementById('more').textContent='Pending'">Connect</div></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#more').inner_text(), 'Pending')
+
+    def test_other_person_connect_not_used_when_more_is_closer(self):
+        doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
+          <main><div class='layout'><div><h2>Test Example</h2>
+          <button id='more'>More</button></div>
+          <aside><h3>Other Person</h3>
+          <button id='wrong' onclick="this.textContent='Pending'">Connect</button></aside>
+          </div></main></body></html>"""
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertEqual(self.page.locator('#wrong').inner_text(), 'Connect')
+        self.assertEqual(self.db.attempts_today(), 0)
+
+    def test_multiple_direct_connect_buttons_never_guess(self):
+        doc = html("""<button>More</button>
+          <button id='first' onclick="this.textContent='Pending'">Connect</button>
+          <button id='second' onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('Multiple visible Connect', reason)
+        self.assertEqual(self.page.locator('#first').inner_text(), 'Connect')
+        self.assertEqual(self.page.locator('#second').inner_text(), 'Connect')
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_h3_heading_with_named_title_sends_only_target(self):
         doc = """<html><head><title>Test Example | LinkedIn</title></head><body>
           <main><div><h3>Test Example</h3>
