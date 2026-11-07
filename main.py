@@ -8,6 +8,7 @@ import json
 import multiprocessing
 import os
 import queue
+import sqlite3
 import sys
 import threading
 
@@ -37,10 +38,34 @@ from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
 APP_DIR = Path.home() / "ConnectionPilot"
-APP_DIR.mkdir(parents=True, exist_ok=True)
-restrict_posix_data(APP_DIR)
-STORE = Store(APP_DIR / "connectionpilot.sqlite3")
 APP_VERSION = "v1.0.6"
+
+
+def _startup_storage_error(message):
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None, message, "ConnectionPilot cannot start", 0x10)
+    else:
+        print(message, file=sys.stderr)
+
+
+def initialize_store(directory):
+    """Report inaccessible/corrupt local storage instead of silently exiting."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        restrict_posix_data(directory)
+        return Store(directory / "connectionpilot.sqlite3")
+    except (OSError, sqlite3.DatabaseError) as exc:
+        _startup_storage_error(
+            f"ConnectionPilot could not open its local data folder:\n{directory}\n\n"
+            f"{safe_diagnostic(exc, 200)}\n\n"
+            "Check folder permissions and available disk space. Your existing "
+            "data has not been deleted.")
+        raise SystemExit(1) from exc
+
+
+STORE = initialize_store(APP_DIR)
 
 
 def asset_path(name: str) -> Path:
