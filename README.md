@@ -193,6 +193,10 @@ who prefer running Python source. The `.exe` build is generated on Windows
 CI rather than cross-compiled on Linux; a successful hosted build must be
 confirmed before claiming a tested executable download exists.
 
+The Windows EXE bundles **no timezone database files**. Eastern scheduling
+uses built-in US daylight-saving rules (currently the March/November schedule).
+If US law changes the daylight-saving dates, an app update will be necessary.
+
 ## Automatic GitHub Releases
 
 After a successful Windows build on a commit merged to `main`, GitHub Actions
