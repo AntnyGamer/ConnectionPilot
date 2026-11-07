@@ -29,9 +29,11 @@ class BrandingTests(unittest.TestCase):
         with TemporaryDirectory() as folder:
             for error in (PermissionError("Access is denied"),
                           sqlite3.DatabaseError("database file is malformed")):
-                with self.subTest(error=type(error).__name__), \\
-                     patch("main.Store", side_effect=error), \\
-                     patch("main._startup_storage_error") as alert:
+                with (
+                    self.subTest(error=type(error).__name__),
+                    patch("main.Store", side_effect=error),
+                    patch("main._startup_storage_error") as alert,
+                ):
                     with self.assertRaises(SystemExit):
                         main.initialize_store(Path(folder))
                     alert.assert_called_once()
