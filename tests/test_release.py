@@ -21,6 +21,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('gh release create', workflow)
         self.assertIn('--target "$GITHUB_SHA"', workflow)
         self.assertIn('--latest', workflow)
+        self.assertIn('gh release view "$TAG"', workflow)
+        self.assertIn('Keeping the immutable release unchanged', workflow)
+        self.assertIn('exit 0', workflow)
 
     def test_uses_existing_playwright_chromium(self):
         with TemporaryDirectory() as tmp:
