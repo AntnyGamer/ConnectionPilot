@@ -632,16 +632,17 @@ def smoke_test_exe(result_path):
                 raise FileNotFoundError(f"Missing bundled asset: {asset}")
 
         stage("assets validated")
+        from datetime import timedelta, timezone
         from logic import TZ, local_now
-        from eastern_time import eastern_zone
-        if local_now().tzinfo != TZ:
-            raise RuntimeError("Eastern timezone data unavailable in packaged EXE")
-
-        with (Path(sys._MEIPASS) / "zoneinfo" / "America" / "New_York").open("rb") as zone:
-            if zone.seek(0, 2) > 50_000:
-                raise RuntimeError("Packaged Eastern timezone data exceeds 50 KB")
-        if eastern_zone().key != "America/New_York":
-            raise RuntimeError("Bundled Eastern timezone cannot be loaded")
+        if local_now().tzinfo is not TZ:
+            raise RuntimeError("Eastern timezone clock unavailable in packaged EXE")
+        if (datetime(2026, 1, 15, tzinfo=TZ).utcoffset() != timedelta(hours=-5)
+                or datetime(2026, 7, 15, tzinfo=TZ).utcoffset() != timedelta(hours=-4)):
+            raise RuntimeError("Eastern daylight-saving clock is incorrect")
+        first = datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc).astimezone(TZ)
+        second = datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc).astimezone(TZ)
+        if (first.hour, first.fold, second.hour, second.fold) != (1, 0, 1, 1):
+            raise RuntimeError("Eastern fallback-hour disambiguation failed")
         stage("timezone validated")
         from tempfile import TemporaryDirectory
         from automation import browser_launch_settings, choose_browser_channel
