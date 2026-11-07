@@ -590,16 +590,27 @@ def smoke_test_exe(result_path):
             raise RuntimeError("Eastern timezone data unavailable in packaged EXE")
 
         from tempfile import TemporaryDirectory
+        from automation import browser_launch_settings, choose_browser_channel
+        from playwright.sync_api import sync_playwright
         with TemporaryDirectory(prefix="ConnectionPilot-smoke-") as directory:
             db = Store(Path(directory) / "probe.sqlite3")
             db.set_setting("smoke", "ok")
             if db.setting("smoke") != "ok":
                 raise RuntimeError("SQLite persistence test failed")
 
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            if not p.chromium.executable_path:
-                raise RuntimeError("Playwright driver cannot locate browser metadata")
+            # Exercise the actual packaged Node/Playwright driver, not only an import.
+            # The Windows workflow points Playwright at an empty browser cache so
+            # this also verifies fallback to an installed Chrome or Edge browser.
+            with sync_playwright() as p:
+                channel = choose_browser_channel("chromium", p.chromium.executable_path)
+                profile, options = browser_launch_settings(directory, channel)
+                browser = p.chromium.launch_persistent_context(
+                    profile, headless=True, chromium_sandbox=True, **options)
+                try:
+                    page = browser.pages[0] if browser.pages else browser.new_page()
+                    page.goto("about:blank")
+                finally:
+                    browser.close()
 
         root = tk.Tk()
         root.withdraw()
@@ -608,7 +619,7 @@ def smoke_test_exe(result_path):
             root.update_idletasks()
         finally:
             root.destroy()
-        result_path.write_text(f"PASS {APP_VERSION}: startup, GUI, assets, TZ, SQLite, Playwright\n",
+        result_path.write_text(f"PASS {APP_VERSION}: startup, GUI, assets, TZ, SQLite, Playwright, browser\n",
                                encoding="utf-8")
         return 0
     except Exception as exc:
