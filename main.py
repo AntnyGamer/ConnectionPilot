@@ -643,6 +643,13 @@ def smoke_test_exe(result_path):
         second = datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc).astimezone(TZ)
         if (first.hour, first.fold, second.hour, second.fold) != (1, 0, 1, 1):
             raise RuntimeError("Eastern fallback-hour disambiguation failed")
+        # Load representative regions from packaged tzdata. This catches
+        # missing dynamically imported region packages in a frozen EXE.
+        from zoneinfo import ZoneInfo
+        for key in ("Asia/Tokyo", "Europe/London", "Pacific/Auckland",
+                    "America/Argentina/Buenos_Aires"):
+            if ZoneInfo(key).key != key:
+                raise RuntimeError("Incomplete packaged timezone data: " + key)
         stage("timezone validated")
         from tempfile import TemporaryDirectory
         from automation import browser_launch_settings, choose_browser_channel
