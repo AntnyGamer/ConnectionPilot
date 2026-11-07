@@ -574,7 +574,52 @@ def acquire_instance_lock(path):
         return None
 
 
+
+def smoke_test_exe(result_path):
+    """Offline validation of the frozen Windows application and its dependencies."""
+    try:
+        if not getattr(sys, "frozen", False):
+            raise RuntimeError("Smoke test must run from the packaged EXE")
+        for asset in ("connectionpilot.ico", "connectionpilot.png",
+                      "connectionpilot-header.png"):
+            if not asset_path(asset).is_file():
+                raise FileNotFoundError(f"Missing bundled asset: {asset}")
+
+        from logic import TZ, local_now
+        if local_now().tzinfo != TZ:
+            raise RuntimeError("Eastern timezone data unavailable in packaged EXE")
+
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory(prefix="ConnectionPilot-smoke-") as directory:
+            db = Store(Path(directory) / "probe.sqlite3")
+            db.set_setting("smoke", "ok")
+            if db.setting("smoke") != "ok":
+                raise RuntimeError("SQLite persistence test failed")
+
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            if not p.chromium.executable_path:
+                raise RuntimeError("Playwright driver cannot locate browser metadata")
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            App(root)
+            root.update_idletasks()
+        finally:
+            root.destroy()
+        result_path.write_text(f"PASS {APP_VERSION}: startup, GUI, assets, TZ, SQLite, Playwright\n",
+                               encoding="utf-8")
+        return 0
+    except Exception as exc:
+        result_path.write_text("FAIL " + safe_diagnostic(exc, 300) + "\n",
+                               encoding="utf-8")
+        return 1
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+        raise SystemExit(smoke_test_exe(Path(sys.argv[2])))
     instance_lock = acquire_instance_lock(APP_DIR / "instance.lock")
     if instance_lock is None:
         root = tk.Tk()
