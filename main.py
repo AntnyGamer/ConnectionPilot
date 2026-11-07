@@ -591,7 +591,9 @@ def acquire_instance_lock(path):
 
 def smoke_test_exe(result_path):
     """Offline validation of the frozen Windows application and its dependencies."""
+    current_stage = ["starting"]
     def stage(name):
+        current_stage[0] = name
         result_path.write_text("STAGE " + name + "\n", encoding="utf-8")
 
     stage("starting")
@@ -655,8 +657,11 @@ def smoke_test_exe(result_path):
                                encoding="utf-8")
         return 0
     except Exception as exc:
-        result_path.write_text("FAIL " + safe_diagnostic(exc, 300) + "\n",
-                               encoding="utf-8")
+        # Only the smoke test opens a fresh offline browser profile, so its
+        # launch diagnostics cannot contain a real user's session or tokens.
+        result_path.write_text(
+            f"FAIL at {current_stage[0]}: {type(exc).__name__}\n"
+            + str(exc)[:7000] + "\n", encoding="utf-8")
         return 1
 
 
