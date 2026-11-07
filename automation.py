@@ -13,7 +13,8 @@ from security import is_trusted_linkedin_page, safe_diagnostic
 
 from logic import (has_stop_signal, in_work_hours, local_now, match_score,
                    clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
-                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours)
+                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours,
+                   unique_phrases)
 
 # Restricted account titles are checked as complete headings, never as a
 # keyword occurring anywhere in someone's authored text.
@@ -786,8 +787,8 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             check_protection(page)
             notify("Signed in. Campaign is running.")
             on_update()
-            searches = [s.strip() for s in config["searches"] if s.strip()]
-            match_terms = [s.strip() for s in config["match_terms"] if s.strip()]
+            searches = unique_phrases(config["searches"])
+            match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
             discovery_failures = 0
             while not stop_event.is_set():
