@@ -69,6 +69,21 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.total_attempts(), 1)
         self.assertEqual(self.store.counts().get('uncertain'), 1)
 
+    def test_duplicate_score_refreshes_updated_at_without_changing_discovery(self):
+        from unittest.mock import patch
+        url = 'https://www.linkedin.com/in/updated-queued/'
+        created = '2026-11-02T10:00:00-05:00'
+        updated = '2026-11-02T11:00:00-05:00'
+        with patch.object(self.store, '_now', return_value=created):
+            self.store.add(url, 'Updated Queued', 'policy', 25)
+        with patch.object(self.store, '_now', return_value=updated):
+            self.store.add(url, 'Different Name', 'politics and policy', 75)
+        candidate = self.store.next_profile()
+        self.assertEqual(candidate['discovered_at'], created)
+        self.assertEqual(candidate['updated_at'], updated)
+        self.assertEqual(candidate['name'], 'Updated Queued')
+        self.assertEqual(candidate['score'], 75)
+
     def test_pause_in_discovery_keeps_page_and_resumes_without_duplicates(self):
         pause = threading.Event()
 
