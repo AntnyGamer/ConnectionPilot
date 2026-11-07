@@ -161,7 +161,7 @@ def check_protection(page):
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
 
-def wait_or_stop(seconds, stop_event, pause_event, status):
+def wait_or_stop(seconds, stop_event, pause_event, status, reason=""):
     """Responsive wait that can pause without sending invitations."""
     until = time.monotonic() + seconds
     last_bucket = None
@@ -184,7 +184,8 @@ def wait_or_stop(seconds, stop_event, pause_event, status):
         else:
             bucket = ("minutes", f"{math.ceil(remaining / 60)} minute(s)")
         if bucket != last_bucket:
-            status(f"Next action in {bucket[1]}. You can pause or stop.")
+            prefix = f"{reason} " if reason else ""
+            status(f"{prefix}Next action in {bucket[1]}. You can pause or stop.")
             last_bucket = bucket
         stop_event.wait(min(1, remaining))
     raise StopRun()
@@ -802,7 +803,8 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 now = local_now()
                 if not in_work_hours(now, config["start_hour"], config["end_hour"]):
                     wait_or_stop(seconds_until_work_hours(now, config["start_hour"], config["end_hour"]),
-                                 stop_event, pause_event, notify)
+                                 stop_event, pause_event, notify,
+                                 reason=f"Outside sending hours ({config['start_hour']}:00–{config['end_hour']}:00 Eastern).")
                     continue
                 today = store.attempts_today()
                 if today >= config["daily_limit"]:
