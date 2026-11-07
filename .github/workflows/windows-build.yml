@@ -45,6 +45,25 @@ jobs:
           $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
           if ($null -eq $icon -or $icon.Width -lt 16) { throw 'EXE has no usable icon' }
           Write-Host "Verified icon $($icon.Width)x$($icon.Height), product $($f.VersionInfo.ProductName)"
+      - name: Smoke-test the actual packaged EXE offline
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path 'dist/ConnectionPilot.exe').Path
+          $result = Join-Path $env:RUNNER_TEMP 'connectionpilot-exe-smoke.txt'
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'empty-playwright-browsers'
+          New-Item -ItemType Directory -Path $env:PLAYWRIGHT_BROWSERS_PATH -Force | Out-Null
+          $p = Start-Process -FilePath $exe -ArgumentList @('--smoke-test', "`"$result`"") -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'Packaged EXE did not complete its startup test within 120 seconds'
+          }
+          if (Test-Path $result) {
+            Get-Content $result
+          }
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $result) -or
+              -not (Select-String -Path $result -Pattern '^PASS v1.0.6:' -Quiet)) {
+            throw "Packaged EXE startup smoke test failed with exit code $($p.ExitCode)"
+          }
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v7
         with:
