@@ -95,14 +95,14 @@ class LogicTests(unittest.TestCase):
     def test_dst_fall_back_waiting_time(self):
         # November 1, 2026: EDT becomes EST. The real wait includes the extra hour.
         d = datetime(2026, 11, 1, 0, 30, tzinfo=TZ)
-        self.assertEqual(seconds_until_work_hours(d, 9, 19), 34200)
+        self.assertEqual(seconds_until_work_hours(d, 8, 20), 30600)
         self.assertEqual(seconds_until_tomorrow(d), 88200)
 
     def test_daily_pacing_is_not_a_quota(self):
-        self.assertEqual(theoretical_daily_capacity(5400), 7)  # Old 90 minutes.
-        self.assertEqual(theoretical_daily_capacity(90), 400)  # Now 90 seconds.
-        self.assertEqual(theoretical_daily_capacity(60), 600)
-        self.assertEqual(theoretical_daily_capacity(0.1), 360000)
+        self.assertEqual(theoretical_daily_capacity(5400), 8)  # Old 90 minutes.
+        self.assertEqual(theoretical_daily_capacity(90), 480)  # Now 90 seconds.
+        self.assertEqual(theoretical_daily_capacity(60), 720)
+        self.assertEqual(theoretical_daily_capacity(0.1), 432000)
         self.assertEqual(theoretical_daily_capacity(21600), 2)
         self.assertEqual(theoretical_daily_capacity(0), 0)
     def test_fractional_seconds_validation(self):
@@ -121,6 +121,7 @@ class LogicTests(unittest.TestCase):
         self.assertGreater(match_score('Public Policy Analyst at New Jersey Government'), 0)
         self.assertEqual(match_score('Photographer and chef'), 0)
         self.assertEqual(match_score('ROWAN UNIVERSITY staff', ['rowan']), 25)
+        self.assertEqual(match_score('Public Policy Analyst', []), 0)
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
         self.assertTrue(has_stop_signal('Please complete CAPTCHA'))
@@ -131,7 +132,11 @@ class LogicTests(unittest.TestCase):
     def test_work_hours(self):
         self.assertTrue(in_work_hours(datetime(2026, 11, 2, 10, tzinfo=TZ), 9, 19))
         self.assertFalse(in_work_hours(datetime(2026, 11, 2, 21, tzinfo=TZ), 9, 19))
-        self.assertEqual(seconds_until_work_hours(datetime(2026, 11, 2, 8, tzinfo=TZ), 9, 19), 3600)
+        self.assertEqual(seconds_until_work_hours(datetime(2026, 11, 2, 7, tzinfo=TZ), 8, 20), 3600)
+        self.assertTrue(in_work_hours(datetime(2026, 11, 2, 8, tzinfo=TZ), 8, 20))
+        self.assertTrue(in_work_hours(datetime(2026, 11, 2, 19, 59, tzinfo=TZ), 8, 20))
+        self.assertFalse(in_work_hours(datetime(2026, 11, 2, 20, tzinfo=TZ), 8, 20))
+        self.assertEqual(seconds_until_work_hours(datetime(2026, 11, 2, 20, tzinfo=TZ), 8, 20), 43200)
     def test_cooldown(self):
         now = datetime(2026, 11, 2, 10, 0, tzinfo=TZ)
         self.assertEqual(seconds_until_next_send(now, None, 90), 0)
