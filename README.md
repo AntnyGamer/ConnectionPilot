@@ -180,7 +180,9 @@ When that version's release tag already exists, a later successful main-branch b
 The repo also contains a **Windows-only** GitHub Actions build at
 [Actions](https://github.com/AntnyGamer/ConnectionPilot/actions/workflows/windows-build.yml)
 that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
-embeds the icon and version metadata, and verifies the executable. Download
+embeds the icon and version metadata, and tests the actual executable's
+startup, bundled resources, timezone data, local SQLite storage and offline
+Chrome/Edge launch from a clean profile before publishing the build artifact. Download
 `ConnectionPilot-v1.0.6-Windows-EXE` from the successful workflow's Artifacts.
 This is an unsigned executable and Windows SmartScreen may warn; no code
 signing certificate is bundled. The executable uses Chrome/Edge for Google
