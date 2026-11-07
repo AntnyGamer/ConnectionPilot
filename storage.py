@@ -196,13 +196,6 @@ class Store:
         day = datetime.now(TZ).date()
         return day.isoformat() + "T", (day + timedelta(days=1)).isoformat() + "T"
 
-    def sent_today(self):
-        start, end = self._today_bounds()
-        with self._conn() as db:
-            return db.execute("""SELECT count(*) FROM attempts
-                WHERE result='sent' AND initiated_at >= ? AND initiated_at < ?""",
-                (start, end)).fetchone()[0]
-
     def total_attempts(self):
         """Count every potentially sending click, regardless of its final UI status."""
         with self._conn() as db:
@@ -260,8 +253,3 @@ class Store:
             row = db.execute("""SELECT initiated_at FROM attempts
                                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchone()
             return row[0] if row else None
-
-    def history(self, limit=40):
-        with self._conn() as db:
-            rows = db.execute("SELECT at, event, detail FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-            return [tuple(row) for row in rows]
