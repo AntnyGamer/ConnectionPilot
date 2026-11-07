@@ -18,7 +18,7 @@ class DependencyTests(unittest.TestCase):
                 expected[name.strip()] = wanted.strip()
         self.assertEqual(pins, expected)
         self.assertIn("playwright", pins)
-        self.assertIn("tzdata", pins)
+        self.assertNotIn("tzdata", pins)
 
     def test_invalid_pin_is_rejected(self):
         from unittest.mock import Mock
