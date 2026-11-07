@@ -85,6 +85,19 @@ class BrandingTests(unittest.TestCase):
                 self.assertEqual(db.setting("page:" + term, "1"), "1")
             self.assertEqual(db.setting("ui:searches"), "policy")
 
+            # A previously removed search may still have a cursor saved by
+            # older app versions. Re-adding it must restart only that phrase.
+            db.set_setting("page:policy", "8")
+            db.set_setting("page:government", "6")
+            app.running = False
+            app.search_box.get.return_value = "policy\ngovernment"
+            with patch("main.STORE", db), patch("main.threading.Thread") as worker:
+                app.start()
+            worker.assert_called_once()
+            self.assertEqual(db.setting("page:government", "1"), "1")
+            self.assertEqual(db.setting("page:policy"), "8")
+            self.assertEqual(db.setting("ui:searches"), "policy\ngovernment")
+
     def test_invalid_saved_filter_values_recover_safely(self):
         app = main.App.__new__(main.App)
         saved = '{"locations": null, "titles": 55, "schools": "Rowan", "min_score": Infinity}'

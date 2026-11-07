@@ -513,6 +513,12 @@ class App:
             STORE.requeue_filtered()
             if not searches_reset:
                 STORE.reset_search_pages(searches)
+        elif previous_searches is not None and not searches_reset:
+            # A newly added phrase may retain a cursor from an older version
+            # of the app, even though it wasn't in the last saved search list.
+            new_searches = [s for s in searches if s.casefold() not in old_terms]
+            if new_searches:
+                STORE.reset_search_pages(new_searches)
         settings = {
             "ui:target": target, "ui:daily": daily, "ui:cooldown": cooldown,
             "ui:searches": "\n".join(searches), "ui:matches": ", ".join(matches),

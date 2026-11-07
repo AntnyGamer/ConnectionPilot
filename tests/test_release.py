@@ -19,6 +19,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('actions/download-artifact@v8', workflow)
         self.assertIn('sha256sum --check', workflow)
         self.assertIn('gh release create', workflow)
+        self.assertIn('gh api "repos/$GH_REPO/git/ref/tags/$TAG"', workflow)
+        self.assertLess(workflow.index('gh api "repos/$GH_REPO/git/ref/tags/$TAG"'),
+                        workflow.index('gh release create'))
         self.assertIn('--target "$GITHUB_SHA"', workflow)
         self.assertIn('--latest', workflow)
         self.assertIn('gh release view "$TAG"', workflow)

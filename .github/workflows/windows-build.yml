@@ -142,10 +142,16 @@ jobs:
             echo "Release $TAG already exists. Keeping the immutable release unchanged; the new EXE remains available as a workflow artifact."
             exit 0
           fi
+          # A leftover Git tag without a release could point to older source.
+          # Do not publish a new EXE under an unrelated existing commit.
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists without a published release. Refusing to reuse it."
+            exit 1
+          fi
           gh release create "$TAG" \
             "release/ConnectionPilot.exe#ConnectionPilot v1.1.0 for Windows" \
             "release/ConnectionPilot.exe.sha256#SHA-256 checksum" \
             "release/connectionpilot.png#ConnectionPilot logo" \
             "release/connectionpilot.ico#Windows application icon" \
             --target "$GITHUB_SHA" --title "ConnectionPilot v1.1.0" --latest \
-            --notes "ConnectionPilot v1.1.0 for Windows, built from commit $GITHUB_SHA. Extends the local sending window to 8 AM–8 PM Eastern, improves scheduling and pause/resume status, fixes duplicate keyword scoring and search phrases, and strengthens packaged EXE startup reliability. Verified by Windows offline tests, security analysis, and an executable smoke test. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
+            --notes "ConnectionPilot v1.1.0 for Windows, built from commit $GITHUB_SHA. Reduces repeated keyword scoring and name normalization during profile discovery, simplifies advanced-filter processing, and fixes stale search-page cursors when searches change. Validated by offline Windows tests and a packaged executable startup smoke test. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
