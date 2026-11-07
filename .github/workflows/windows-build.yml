@@ -34,6 +34,31 @@ jobs:
         run: python scripts/run_tests.py
       - name: Check for private files
         run: python scripts/prepublish_check.py
+      - name: Compare system Chrome launch from normal Python
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'empty-playwright-browsers'
+          New-Item -ItemType Directory -Path $env:PLAYWRIGHT_BROWSERS_PATH -Force | Out-Null
+          @'
+          from tempfile import TemporaryDirectory
+          from playwright.sync_api import sync_playwright
+          from automation import choose_browser_channel, browser_launch_settings
+          with sync_playwright() as p:
+              channel = choose_browser_channel("chromium", p.chromium.executable_path)
+              print("Selected channel:", channel, flush=True)
+              with TemporaryDirectory(prefix="ConnectionPilot-control-") as temp:
+                  profile, options = browser_launch_settings(temp, channel)
+                  browser = p.chromium.launch_persistent_context(
+                      profile, headless=True, chromium_sandbox=True,
+                      timeout=20000, **options)
+                  try:
+                      page = browser.pages[0] if browser.pages else browser.new_page()
+                      page.goto("about:blank", timeout=10000)
+                      print("Normal Python Chrome/Edge launch passed", flush=True)
+                  finally:
+                      browser.close()
+          '@ | python -
       - name: Build the branded EXE
         run: python scripts/build_windows.py
       - name: Verify embedded executable icon and metadata
