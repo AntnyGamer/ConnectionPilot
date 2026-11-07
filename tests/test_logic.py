@@ -2,13 +2,13 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from eastern_time import TZ
 from logic import (has_stop_signal, names_match, search_result_name, in_work_hours, local_now, match_score, normalize_profile,
                    passes_profile_filters, theoretical_daily_capacity, valid_cooldown_seconds,
-                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int)
+                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int,
+                   unique_phrases, clean_terms)
 from storage import Store
 
-TZ = ZoneInfo("America/New_York")
 
 class LogicTests(unittest.TestCase):
     def test_corrupt_saved_ui_integers_recover_without_losing_valid_values(self):
@@ -95,14 +95,14 @@ class LogicTests(unittest.TestCase):
     def test_dst_fall_back_waiting_time(self):
         # November 1, 2026: EDT becomes EST. The real wait includes the extra hour.
         d = datetime(2026, 11, 1, 0, 30, tzinfo=TZ)
-        self.assertEqual(seconds_until_work_hours(d, 9, 19), 34200)
+        self.assertEqual(seconds_until_work_hours(d, 8, 20), 30600)
         self.assertEqual(seconds_until_tomorrow(d), 88200)
 
     def test_daily_pacing_is_not_a_quota(self):
-        self.assertEqual(theoretical_daily_capacity(5400), 7)  # Old 90 minutes.
-        self.assertEqual(theoretical_daily_capacity(90), 400)  # Now 90 seconds.
-        self.assertEqual(theoretical_daily_capacity(60), 600)
-        self.assertEqual(theoretical_daily_capacity(0.1), 360000)
+        self.assertEqual(theoretical_daily_capacity(5400), 8)  # Old 90 minutes.
+        self.assertEqual(theoretical_daily_capacity(90), 480)  # Now 90 seconds.
+        self.assertEqual(theoretical_daily_capacity(60), 720)
+        self.assertEqual(theoretical_daily_capacity(0.1), 432000)
         self.assertEqual(theoretical_daily_capacity(21600), 2)
         self.assertEqual(theoretical_daily_capacity(0), 0)
     def test_fractional_seconds_validation(self):
@@ -121,6 +121,21 @@ class LogicTests(unittest.TestCase):
         self.assertGreater(match_score('Public Policy Analyst at New Jersey Government'), 0)
         self.assertEqual(match_score('Photographer and chef'), 0)
         self.assertEqual(match_score('ROWAN UNIVERSITY staff', ['rowan']), 25)
+        self.assertEqual(match_score('Public Policy Analyst', []), 0)
+        self.assertEqual(match_score('politics', ['politics', 'POLITICS', 'politics']), 25)
+        self.assertEqual(match_score('politics government', ['politics', 'POLITICS', 'government']), 50)
+        self.assertEqual(unique_phrases([' NJ policy ', '', 'nj POLICY', 'Rowan', 'rowan ']),
+                         ['NJ policy', 'Rowan'])
+    def test_keyword_normalization_preserves_exact_results(self):
+        terms = [' Politics ', 'POLITICS', 'government', ' ', None, 42]
+        self.assertEqual(match_score('POLITICS and GOVERNMENT', terms), 50)
+        self.assertEqual(match_score('irrelevant profile', terms), 0)
+        self.assertEqual(clean_terms(' NJ , New Jersey, nj , , Policy '),
+                         ['nj', 'new jersey', 'policy'])
+        self.assertEqual(clean_terms([' NJ ', 'nj', None, 42, 'policy', 'POLICY']),
+                         ['nj', 'policy'])
+        self.assertEqual(clean_terms(None), [])
+
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
         self.assertTrue(has_stop_signal('Please complete CAPTCHA'))
@@ -131,7 +146,11 @@ class LogicTests(unittest.TestCase):
     def test_work_hours(self):
         self.assertTrue(in_work_hours(datetime(2026, 11, 2, 10, tzinfo=TZ), 9, 19))
         self.assertFalse(in_work_hours(datetime(2026, 11, 2, 21, tzinfo=TZ), 9, 19))
-        self.assertEqual(seconds_until_work_hours(datetime(2026, 11, 2, 8, tzinfo=TZ), 9, 19), 3600)
+        self.assertEqual(seconds_until_work_hours(datetime(2026, 11, 2, 7, tzinfo=TZ), 8, 20), 3600)
+        self.assertTrue(in_work_hours(datetime(2026, 11, 2, 8, tzinfo=TZ), 8, 20))
+        self.assertTrue(in_work_hours(datetime(2026, 11, 2, 19, 59, tzinfo=TZ), 8, 20))
+        self.assertFalse(in_work_hours(datetime(2026, 11, 2, 20, tzinfo=TZ), 8, 20))
+        self.assertEqual(seconds_until_work_hours(datetime(2026, 11, 2, 20, tzinfo=TZ), 8, 20), 43200)
     def test_cooldown(self):
         now = datetime(2026, 11, 2, 10, 0, tzinfo=TZ)
         self.assertEqual(seconds_until_next_send(now, None, 90), 0)
@@ -168,6 +187,37 @@ class StorageTests(unittest.TestCase):
         self.db = Store(Path(self.tmp.name) / 'test.sqlite3')
     def tearDown(self):
         self.tmp.cleanup()
+    def test_foreign_key_constraint_is_enforced_on_every_connection(self):
+        import sqlite3
+        with self.db._conn() as db:
+            self.assertEqual(db.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("INSERT INTO attempts (url, initiated_at, result) VALUES (?,?,?)",
+                           ("https://www.linkedin.com/in/not-discovered/",
+                            "2026-11-02T10:00:00-05:00", "sent"))
+
+    def test_queued_count_never_includes_already_attempted_profiles(self):
+        url = "https://www.linkedin.com/in/queued-after-attempt/"
+        self.db.add(url, "Already Attempted", "government", 25)
+        self.db.mark(url, "uncertain", "Potential invitation")
+        # A stale queued status does not make the candidate safe to retry.
+        self.db.mark(url, "queued", "Stale status")
+        self.assertEqual(self.db.queued_count(), 0)
+        self.assertIsNone(self.db.next_profile())
+
+    def test_search_change_discards_unattempted_skips_but_not_attempts(self):
+        base = "https://www.linkedin.com/in/"
+        self.db.add(base + "unattempted-skipped/", "Skipped", "policy", 25)
+        self.db.mark(base + "unattempted-skipped/", "skipped", "Name mismatch: changed layout")
+        self.db.add(base + "unattempted-filtered/", "Filtered", "policy", 25)
+        self.db.mark(base + "unattempted-filtered/", "filtered", "Old search terms")
+        self.db.add(base + "attempted/", "Attempted", "policy", 25)
+        self.db.mark(base + "attempted/", "uncertain", "Possible invitation")
+        self.assertEqual(self.db.discard_stale_leads(), 2)
+        self.assertTrue(self.db.has_attempt(base + "attempted/"))
+        self.assertEqual(self.db.total_attempts(), 1)
+        self.assertEqual(self.db.retry_safe_skips(), 0)
+
     def test_dedupe_and_order(self):
         a='https://www.linkedin.com/in/alice/'
         b='https://www.linkedin.com/in/bob/'
@@ -178,11 +228,13 @@ class StorageTests(unittest.TestCase):
         self.db.mark(b,'sent','Invitation confirmed')
         self.assertEqual(self.db.counts()['sent'], 1)
         self.assertEqual(self.db.next_profile()['url'], a)
-    def test_settings_and_history(self):
+    def test_settings_and_event_logging(self):
         self.db.set_setting('term','New Jersey')
         self.assertEqual(self.db.setting('term'), 'New Jersey')
         self.db.log('example','OK')
-        self.assertEqual(self.db.history()[0][1], 'example')
+        with self.db._conn() as conn:
+            row = conn.execute("SELECT event, detail FROM events ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(tuple(row), ('example', 'OK'))
     def test_initial_attempt_insert_does_not_do_redundant_update(self):
         url = "https://www.linkedin.com/in/write-once/"
         self.db.add(url, "Write Once", "government", 25)
@@ -376,7 +428,8 @@ class StorageTests(unittest.TestCase):
         self.db.clear_campaign_data()
         self.assertEqual(self.db.dashboard_stats(), ({}, 0, 0, 0))
         self.assertIsNone(self.db.next_profile())
-        self.assertEqual(self.db.history(), [])
+        with self.db._conn() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM events").fetchone()[0], 0)
         for key in ('page:politics', 'inspect_fail:' + url, 'run:matching',
                     'ui:searches', 'ui:matches'):
             self.assertIsNone(self.db.setting(key))
@@ -395,19 +448,17 @@ class StorageTests(unittest.TestCase):
             base + "finished/", base + "attempted/"
         })
 
-    def test_dashboard_snapshot_matches_individual_counters(self):
+    def test_dashboard_snapshot_counts_uncertain_and_confirmed(self):
         a = 'https://www.linkedin.com/in/dashboard-a/'
         b = 'https://www.linkedin.com/in/dashboard-b/'
         self.db.add(a, 'Dashboard A', 'policy', 25)
         self.db.add(b, 'Dashboard B', 'government', 50)
         self.db.mark(a, 'uncertain', 'Possible click')
         self.assertEqual(self.db.dashboard_stats(),
-                         (self.db.counts(), self.db.total_attempts(),
-                          self.db.sent_today(), self.db.attempts_today()))
+                         ({"queued": 1, "uncertain": 1}, 1, 0, 1))
         self.db.mark(a, 'sent', 'Confirmed')
         self.assertEqual(self.db.dashboard_stats(),
-                         (self.db.counts(), self.db.total_attempts(),
-                          self.db.sent_today(), self.db.attempts_today()))
+                         ({"queued": 1, "sent": 1}, 1, 1, 1))
 
     def test_uncertain_attempt_counts_toward_daily_cap_and_cooldown(self):
         a='https://www.linkedin.com/in/alice/'
@@ -419,11 +470,11 @@ class StorageTests(unittest.TestCase):
         recorded = self.db.last_attempt_at()
         self.assertIsNotNone(recorded)
         self.assertEqual(self.db.attempts_today(), 1)
-        self.assertEqual(self.db.sent_today(), 0)
+        self.assertEqual(self.db.dashboard_stats()[2], 0)
         self.assertEqual(self.db.next_profile()['url'], b)
         self.db.mark(a, 'sent', 'Confirmed')
         self.assertEqual(self.db.attempts_today(), 1)
-        self.assertEqual(self.db.sent_today(), 1)
+        self.assertEqual(self.db.dashboard_stats()[2], 1)
 
     def test_attempt_timestamp_survives_confirmation_and_later_updates(self):
         from datetime import timedelta
@@ -437,7 +488,7 @@ class StorageTests(unittest.TestCase):
         self.db.mark(a, 'sent', 'Confirmed the next day')
         self.assertEqual(self.db.last_attempt_at(), stamp)
         self.assertEqual(self.db.attempts_today(), 0)
-        self.assertEqual(self.db.sent_today(), 0)
+        self.assertEqual(self.db.dashboard_stats()[2], 0)
         self.assertIsNone(self.db.next_profile())
 
     def test_skipped_after_potential_click_remains_counted(self):
@@ -446,7 +497,7 @@ class StorageTests(unittest.TestCase):
         self.db.mark(url, 'uncertain', 'Connect dialog opened')
         self.db.mark(url, 'skipped', 'Confirmation requires email')
         self.assertEqual(self.db.attempts_today(), 1)
-        self.assertEqual(self.db.sent_today(), 0)
+        self.assertEqual(self.db.dashboard_stats()[2], 0)
         self.assertIsNone(self.db.next_profile())
 
     def test_reset_search_pages_only_removes_requested_searches(self):
@@ -481,11 +532,11 @@ class StorageTests(unittest.TestCase):
         with patch.object(self.db, '_today_bounds',
                           return_value=('2026-11-01T', '2026-11-02T')):
             self.assertEqual(self.db.attempts_today(), 2)
-            self.assertEqual(self.db.sent_today(), 1)
+            self.assertEqual(self.db.dashboard_stats()[2], 1)
         with patch.object(self.db, '_today_bounds',
                           return_value=('2026-11-02T', '2026-11-03T')):
             self.assertEqual(self.db.attempts_today(), 1)
-            self.assertEqual(self.db.sent_today(), 1)
+            self.assertEqual(self.db.dashboard_stats()[2], 1)
 
     def test_last_attempt_uses_chronological_index(self):
         # Local timestamp text alone is not chronological across UTC offsets.

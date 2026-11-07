@@ -23,6 +23,32 @@ class BrandingTests(unittest.TestCase):
             store.set_setting("ui:searches", "")
             self.assertEqual(main.initial_search_inputs(store), ("", "politics, Rowan"))
 
+    def test_unwritable_app_data_shows_error_without_deleting_data(self):
+        import sqlite3
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as folder:
+            for error in (PermissionError("Access is denied"),
+                          sqlite3.DatabaseError("database file is malformed")):
+                with (
+                    self.subTest(error=type(error).__name__),
+                    patch("main.Store", side_effect=error),
+                    patch("main._startup_storage_error") as alert,
+                ):
+                    with self.assertRaises(SystemExit):
+                        main.initialize_store(Path(folder))
+                    alert.assert_called_once()
+                    self.assertIn("data has not been deleted", alert.call_args.args[0])
+
+    def test_invalid_saved_filter_values_recover_safely(self):
+        app = main.App.__new__(main.App)
+        saved = '{"locations": null, "titles": 55, "schools": "Rowan", "min_score": Infinity}'
+        with patch.object(main.STORE, "setting", return_value=saved):
+            filters = app.load_filters()
+        self.assertEqual(filters["locations"], "")
+        self.assertEqual(filters["titles"], "")
+        self.assertEqual(filters["schools"], "Rowan")
+        self.assertEqual(filters["min_score"], 25)
+
     def test_ui_log_is_bounded_without_erasing_recent_entries(self):
         class LogWidget:
             def __init__(self):
@@ -108,13 +134,13 @@ class BrandingTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/windows-build.yml").read_text()
         win_version = (root / "assets/connectionpilot_version.txt").read_text()
-        self.assertEqual(main.APP_VERSION, "v1.0.5")
-        self.assertIn("filevers=(1, 0, 5, 0)", win_version)
-        self.assertIn("prodvers=(1, 0, 5, 0)", win_version)
-        self.assertEqual(win_version.count("'1.0.5.0'"), 2)
-        self.assertIn("FileVersion -ne '1.0.5.0'", workflow)
-        self.assertIn('TAG="v1.0.5"', workflow)
-        self.assertIn('ConnectionPilot-v1.0.5-Windows-EXE', workflow)
+        self.assertEqual(main.APP_VERSION, "v1.0.6")
+        self.assertIn("filevers=(1, 0, 6, 0)", win_version)
+        self.assertIn("prodvers=(1, 0, 6, 0)", win_version)
+        self.assertEqual(win_version.count("'1.0.6.0'"), 2)
+        self.assertIn("FileVersion -ne '1.0.6.0'", workflow)
+        self.assertIn('TAG="v1.0.6"', workflow)
+        self.assertIn('ConnectionPilot-v1.0.6-Windows-EXE', workflow)
 
     def test_assets_present(self):
         for name in ('connectionpilot.png', 'connectionpilot-header.png',

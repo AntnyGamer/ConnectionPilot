@@ -1,4 +1,4 @@
-"""Build the ConnectionPilot v1.0.5 Windows executable. Run on Windows, never cross-compile from Linux."""
+"""Build the ConnectionPilot v1.0.6 Windows executable. Run on Windows, never cross-compile from Linux."""
 from __future__ import annotations
 import subprocess
 import sys
@@ -18,6 +18,11 @@ def build():
             "--add-data", str(ROOT / "assets/connectionpilot.png") + ";assets",
             "--add-data", str(ROOT / "assets/connectionpilot-header.png") + ";assets",
             "--collect-all", "playwright",
+            # Keep the complete IANA rules, but only package tzdata's files:
+            # PyInstaller compresses them inside its onefile archive.
+            "--collect-data", "tzdata",
+            # ZoneInfo imports region packages dynamically by string name.
+            "--collect-submodules", "tzdata.zoneinfo",
             "--distpath", str(ROOT / "dist"),
             str(ROOT / "main.py")]
     subprocess.check_call(args, cwd=ROOT)

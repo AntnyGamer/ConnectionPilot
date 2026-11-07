@@ -6,9 +6,10 @@ import math
 import unicodedata
 from datetime import datetime, timedelta, time, timezone
 from urllib.parse import urljoin, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
+from eastern_time import TZ
 
-TZ = ZoneInfo("America/New_York")
+SEND_START_HOUR = 8
+SEND_END_HOUR = 20
 
 # Used by match_score when no terms are provided explicitly; not a default
 # value for the application's search-term text field.
@@ -109,10 +110,29 @@ def names_match(discovered: str, displayed: str) -> bool:
                for a, b in zip(expected[1:-1], actual[1:-1]))
 
 
+def unique_phrases(values) -> list[str]:
+    """Remove blank and repeated phrases without changing their original spelling."""
+    seen = set()
+    result = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        key = value.casefold()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
 def match_score(snippet: str, terms: list[str] | None = None) -> int:
-    """Local heuristic, not an AI judgment. Must match at least one interest term."""
+    """Count distinct matching interest terms, not repeated copies of one term."""
     words = (snippet or "").casefold()
-    hits = sum(1 for term in (terms or DEFAULT_MATCH_TERMS) if term.strip() and term.strip().casefold() in words)
+    # Normalize and deduplicate in one pass; this runs for every search card.
+    unique = {term.strip().casefold()
+              for term in (DEFAULT_MATCH_TERMS if terms is None else terms)
+              if isinstance(term, str) and term.strip()}
+    hits = sum(term in words for term in unique)
     return min(100, hits * 25)
 
 
@@ -166,7 +186,15 @@ def clean_terms(value) -> list[str]:
     """Accept a list or comma-separated text. Case-insensitive, no empty filters."""
     if isinstance(value, str):
         value = value.split(",")
-    return list(dict.fromkeys(x.strip().casefold() for x in (value or []) if isinstance(x, str) and x.strip()))
+    seen = set()
+    result = []
+    for item in value or []:
+        if isinstance(item, str):
+            term = item.strip().casefold()
+            if term and term not in seen:
+                seen.add(term)
+                result.append(term)
+    return result
 
 
 def passes_profile_filters(profile_text: str, header_text: str, filters: dict | None,
@@ -221,7 +249,7 @@ def valid_cooldown_seconds(value) -> bool:
     return math.isfinite(seconds) and MIN_COOLDOWN_SECONDS <= seconds <= MAX_COOLDOWN_SECONDS
 
 
-def theoretical_daily_capacity(cooldown_seconds: float, start_hour=9, end_hour=19) -> int:
+def theoretical_daily_capacity(cooldown_seconds: float, start_hour=SEND_START_HOUR, end_hour=SEND_END_HOUR) -> int:
     """Arithmetic pacing upper bound only; browsing takes additional time."""
     total_seconds = (end_hour - start_hour) * 3600
     if total_seconds <= 0 or not valid_cooldown_seconds(cooldown_seconds):

@@ -1,8 +1,8 @@
 <img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="96" />
 
-# ConnectionPilot v1.0.5 — Windows
+# ConnectionPilot v1.0.6 — Windows
 
-**Version: v1.0.5.** App, Windows EXE metadata and GitHub release tag use this same version. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
+**Version: v1.0.6.** App, Windows EXE metadata and GitHub release tag use this same version. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
 
 ## Important limitations
 
@@ -18,9 +18,9 @@ LinkedIn prohibits unauthorized automated invitations, regardless of delay or vo
 2. Extract the ZIP. Double-click `Launch_Windows.cmd` to install any missing dependencies and open the app.
 3. If you use Google sign-in: click **Sign in with Google (Chrome / Edge)**, complete LinkedIn's **Continue with Google** in the normal browser window, then close every window of that *dedicated* browser profile before clicking **Start campaign**.
 4. Enter your search phrases, matching terms and optional Advanced filters. Once signed in, one click on **Start campaign** begins the sending workflow; no further connection clicks are requested.
-5. Keep the program and the browser running during sending hours (9 AM–7 PM, New York time).
+5. Keep the program and the browser running during sending hours (8 AM–8 PM, New York time).
 
-The source ZIP is Python source, not a compiled `.exe`. The first source-based launch requires network access to install dependencies. The Chrome or Edge sign-in profile is kept separate from your regular browser profile. ConnectionPilot enables Chromium's browser sandbox explicitly when opening the automated browser rather than relying on Playwright's unsafe default launch setting.
+The source ZIP is Python source, not a compiled `.exe`. The first source-based launch requires network access to install dependencies. If Chrome or Edge is installed, the source launcher uses it instead of downloading an extra Playwright Chromium browser. The Chrome or Edge sign-in profile is kept separate from your regular browser profile. ConnectionPilot enables Chromium's browser sandbox explicitly when opening the automated browser rather than relying on Playwright's unsafe default launch setting.
 
 ## Settings
 
@@ -29,7 +29,7 @@ The source ZIP is Python source, not a compiled `.exe`. The first source-based l
 | Campaign goal | 200 | 1–5,000 total confirmed or uncertain attempts |
 | Daily invitation cap | 500 | 1–500 local attempt cap |
 | Cooldown | 90 seconds | 0.1–21,600 seconds, including fractions |
-| Sending window | 9 AM–7 PM Eastern | Fixed |
+| Sending window | 8 AM–8 PM Eastern | Fixed |
 | Advanced filters | Minimum relevance score 25 | Location, role, organization, school, sector, exclusions, degree and score |
 
 Search phrases and relevant profile terms are **empty on a first installation**. Once a campaign has been started, its saved phrases and terms reappear when the app is relaunched; installing a newer EXE does not clear them. Use **Clear campaign data** only if you intend to erase the local invitation history, which can allow previous recipients to be approached again.
@@ -174,13 +174,16 @@ icons for existing taskbar pins; an old pin may retain an earlier image. The
 GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
 that GitHub setting.
-The displayed version is **v1.0.5**.
+The displayed version is **v1.0.6**.
+When that version's release tag already exists, a later successful main-branch build leaves the immutable published release untouched; the fresh compiled EXE is still available as a GitHub Actions build artifact. Publishing a new release requires intentionally updating the version and tag.
 
 The repo also contains a **Windows-only** GitHub Actions build at
 [Actions](https://github.com/AntnyGamer/ConnectionPilot/actions/workflows/windows-build.yml)
 that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
-embeds the icon and version metadata, and verifies the executable. Download
-`ConnectionPilot-v1.0.5-Windows-EXE` from the successful workflow's Artifacts.
+embeds the icon and version metadata, and tests the actual executable's
+startup, bundled resources, timezone data, local SQLite storage and offline
+Chrome/Edge launch from a clean profile before publishing the build artifact. Download
+`ConnectionPilot-v1.0.6-Windows-EXE` from the successful workflow's Artifacts.
 This is an unsigned executable and Windows SmartScreen may warn; no code
 signing certificate is bundled. The executable uses Chrome/Edge for Google
 sign-in and needs the relevant browser available on your PC.
@@ -190,13 +193,18 @@ who prefer running Python source. The `.exe` build is generated on Windows
 CI rather than cross-compiled on Linux; a successful hosted build must be
 confirmed before claiming a tested executable download exists.
 
+The Windows EXE includes the complete pinned IANA timezone rules (`tzdata`)
+as **compressed application data**, without bundling unnecessary package source
+or metadata. This supports historical daylight-saving changes and a portable
+Eastern-time schedule even on Windows computers without system IANA data.
+
 ## Automatic GitHub Releases
 
 After a successful Windows build on a commit merged to `main`, GitHub Actions
 publishes the verified `ConnectionPilot.exe`, its SHA-256 checksum, and the matching PNG and ICO logo assets on the
 [latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
-Download the EXE from the release page; this release is **v1.0.5**.
-The release tag is `v1.0.5`, bound to the merge commit's verified source.
+Download the EXE from the release page; this release is **v1.0.6**.
+The release tag is `v1.0.6`, bound to the merge commit's verified source.
 The workflow refuses to replace an existing release with a different binary. Pull request builds run checks and produce test artifacts but
 **never** publish a public release. Publishing uses a write-scoped token only
 after a successful Windows test/build job.

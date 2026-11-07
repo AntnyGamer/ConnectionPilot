@@ -5,9 +5,24 @@ Warning: LinkedIn prohibits unauthorized automation. Cooldowns cannot ensure saf
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import queue
+import sqlite3
 import sys
 import threading
+
+# In frozen Windows apps PyInstaller handles multiprocessing child arguments.
+# GUI bootloaders have no standard streams; provide valid null handles for
+# libraries that assume stdin/stdout/stderr are available.
+multiprocessing.freeze_support()
+if getattr(sys, "frozen", False) and sys.platform == "win32":
+    if sys.stdin is None:
+        sys.stdin = open(os.devnull, "r")
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -15,17 +30,42 @@ from tkinter import messagebox, ttk
 
 from automation import ProtectionScreen, StopRun, run_campaign
 from google_login import close_google_signin, open_google_signin
-from logic import (FILTER_FIELDS,
+from process_env import prepare_external_processes
+from logic import (FILTER_FIELDS, SEND_START_HOUR, SEND_END_HOUR,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
-                   valid_cooldown_seconds, safe_saved_int)
+                   valid_cooldown_seconds, safe_saved_int, unique_phrases)
 from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
 APP_DIR = Path.home() / "ConnectionPilot"
-APP_DIR.mkdir(parents=True, exist_ok=True)
-restrict_posix_data(APP_DIR)
-STORE = Store(APP_DIR / "connectionpilot.sqlite3")
-APP_VERSION = "v1.0.5"
+APP_VERSION = "v1.0.6"
+
+
+def _startup_storage_error(message):
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None, message, "ConnectionPilot cannot start", 0x10)
+    else:
+        print(message, file=sys.stderr)
+
+
+def initialize_store(directory):
+    """Report inaccessible/corrupt local storage instead of silently exiting."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        restrict_posix_data(directory)
+        return Store(directory / "connectionpilot.sqlite3")
+    except (OSError, sqlite3.DatabaseError) as exc:
+        _startup_storage_error(
+            f"ConnectionPilot could not open its local data folder:\n{directory}\n\n"
+            f"{safe_diagnostic(exc, 200)}\n\n"
+            "Check folder permissions and available disk space. Your existing "
+            "data has not been deleted.")
+        raise SystemExit(1) from exc
+
+
+STORE = initialize_store(APP_DIR)
 
 
 def asset_path(name: str) -> Path:
@@ -234,11 +274,14 @@ class App:
                 raise ValueError("Invalid filters")
         except (ValueError, TypeError):
             saved = {}
-        result = {name: str(saved.get(name, "")) for name in (*FILTER_FIELDS, "exclude")}
+        result = {}
+        for name in (*FILTER_FIELDS, "exclude"):
+            value = saved.get(name, "")
+            result[name] = value if isinstance(value, str) else ""
         result["degree"] = saved.get("degree", "Any") if saved.get("degree") in ("Any", "2nd only", "2nd or 3rd") else "Any"
         try:
             result["min_score"] = max(0, min(100, int(saved.get("min_score", 25))))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             result["min_score"] = 25
         return result
 
@@ -257,7 +300,7 @@ class App:
             maximum = theoretical_daily_capacity(pace)
             self.pacing.set(f"Daily cap: {daily} (your setting, NOT LinkedIn's limit). "
                             f"At {pace:g}-second minimum spacing, pacing-only ceiling ≈ {min(daily, maximum)} per day "
-                            "during 9 AM–7 PM Eastern; no guarantee of delivery.")
+                            "during 8 AM–8 PM Eastern; no guarantee of delivery.")
         except (ValueError, tk.TclError):
             self.pacing.set("Set valid daily cap and cooldown values.")
 
@@ -438,8 +481,8 @@ class App:
             cooldown = float(self.cooldown.get())
             if not (1 <= target <= 5000 and 1 <= daily <= 500 and valid_cooldown_seconds(cooldown)):
                 raise ValueError("Campaign setting out of range")
-            searches = [s.strip() for s in self.search_box.get("1.0", "end").splitlines() if s.strip()]
-            matches = [s.strip() for s in self.match_box.get("1.0", "end").split(",") if s.strip()]
+            searches = unique_phrases(self.search_box.get("1.0", "end").splitlines())
+            matches = unique_phrases(self.match_box.get("1.0", "end").split(","))
             if not searches or not matches:
                 raise ValueError("Search and match terms required")
         except (ValueError, AssertionError, tk.TclError):
@@ -454,21 +497,27 @@ class App:
         # discard only leads that have never been attempted.
         old_terms = {s.strip().casefold() for s in (previous_searches or "").splitlines() if s.strip()}
         new_terms = {s.casefold() for s in searches}
+        searches_reset = False
         if previous_searches is not None and not old_terms.issubset(new_terms):
             removed = STORE.discard_stale_leads()
             STORE.reset_search_pages(searches)
+            searches_reset = True
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
-        if STORE.setting("run:matching") != matching_config:
+        matching_changed = STORE.setting("run:matching") != matching_config
+        if matching_changed:
             STORE.requeue_filtered()
-            STORE.reset_search_pages(searches)
-            STORE.set_setting("run:matching", matching_config)
-        STORE.set_settings({
+            if not searches_reset:
+                STORE.reset_search_pages(searches)
+        settings = {
             "ui:target": target, "ui:daily": daily, "ui:cooldown": cooldown,
             "ui:searches": "\n".join(searches), "ui:matches": ", ".join(matches),
             "ui:filters": current_filters_json,
-        })
+        }
+        if matching_changed:
+            settings["run:matching"] = matching_config
+        STORE.set_settings(settings)
         self.stop_event.clear()
         self.pause_event.clear()
         self.running = True
@@ -481,7 +530,7 @@ class App:
         config = {"target": target, "daily_limit": daily, "cooldown": cooldown,
                   "searches": searches, "match_terms": matches, "filters": dict(self.filters),
                   "data_dir": str(APP_DIR), "browser_channel": STORE.setting("ui:browser_channel", "chromium"),
-                  "start_hour": 9, "end_hour": 19}
+                  "start_hour": SEND_START_HOUR, "end_hour": SEND_END_HOUR}
         self.worker = threading.Thread(target=self.work, args=(config,), daemon=True)
         self.worker.start()
 
@@ -571,7 +620,101 @@ def acquire_instance_lock(path):
         return None
 
 
+
+def smoke_test_exe(result_path):
+    """Offline validation of the frozen Windows application and its dependencies."""
+    current_stage = ["starting"]
+    def stage(name):
+        current_stage[0] = name
+        result_path.write_text("STAGE " + name + "\n", encoding="utf-8")
+
+    stage("starting")
+    try:
+        if not getattr(sys, "frozen", False):
+            raise RuntimeError("Smoke test must run from the packaged EXE")
+        for asset in ("connectionpilot.ico", "connectionpilot.png",
+                      "connectionpilot-header.png"):
+            if not asset_path(asset).is_file():
+                raise FileNotFoundError(f"Missing bundled asset: {asset}")
+
+        stage("assets validated")
+        from datetime import timedelta, timezone
+        from logic import TZ, local_now
+        if local_now().tzinfo is not TZ:
+            raise RuntimeError("Eastern timezone clock unavailable in packaged EXE")
+        if (datetime(2026, 1, 15, tzinfo=TZ).utcoffset() != timedelta(hours=-5)
+                or datetime(2026, 7, 15, tzinfo=TZ).utcoffset() != timedelta(hours=-4)):
+            raise RuntimeError("Eastern daylight-saving clock is incorrect")
+        first = datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc).astimezone(TZ)
+        second = datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc).astimezone(TZ)
+        if (first.hour, first.fold, second.hour, second.fold) != (1, 0, 1, 1):
+            raise RuntimeError("Eastern fallback-hour disambiguation failed")
+        # Load representative regions from packaged tzdata. This catches
+        # missing dynamically imported region packages in a frozen EXE.
+        from zoneinfo import ZoneInfo
+        for key in ("Asia/Tokyo", "Europe/London", "Pacific/Auckland",
+                    "America/Argentina/Buenos_Aires"):
+            if ZoneInfo(key).key != key:
+                raise RuntimeError("Incomplete packaged timezone data: " + key)
+        stage("timezone validated")
+        from tempfile import TemporaryDirectory
+        from automation import browser_launch_settings, choose_browser_channel
+        from playwright.sync_api import sync_playwright
+        with TemporaryDirectory(prefix="ConnectionPilot-smoke-") as directory:
+            db = Store(Path(directory) / "probe.sqlite3")
+            db.set_setting("smoke", "ok")
+            if db.setting("smoke") != "ok":
+                raise RuntimeError("SQLite persistence test failed")
+
+            stage("sqlite validated")
+            # Exercise the actual packaged Node/Playwright driver, not only an import.
+            # The Windows workflow points Playwright at an empty browser cache so
+            # this also verifies fallback to an installed Chrome or Edge browser.
+            stage("starting playwright")
+            prepare_external_processes()
+            with sync_playwright() as p:
+                stage("playwright started")
+                channel = choose_browser_channel("chromium", p.chromium.executable_path)
+                profile, options = browser_launch_settings(directory, channel)
+                stage("launching browser " + channel)
+                browser = p.chromium.launch_persistent_context(
+                    profile, headless=True, chromium_sandbox=True,
+                    timeout=20000, **options)
+                stage("browser launched")
+                try:
+                    page = browser.pages[0] if browser.pages else browser.new_page()
+                    page.goto("about:blank", timeout=10000)
+                    stage("about blank loaded")
+                finally:
+                    browser.close()
+                    stage("browser closed")
+            stage("playwright exited")
+
+        stage("creating tkinter root")
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            App(root)
+            root.update_idletasks()
+            stage("tkinter app initialized")
+        finally:
+            root.destroy()
+            stage("tkinter destroyed")
+        result_path.write_text(f"PASS {APP_VERSION}: startup, GUI, assets, TZ, SQLite, Playwright, browser\n",
+                               encoding="utf-8")
+        return 0
+    except Exception as exc:
+        # Only the smoke test opens a fresh offline browser profile, so its
+        # launch diagnostics cannot contain a real user's session or tokens.
+        result_path.write_text(
+            f"FAIL at {current_stage[0]}: {type(exc).__name__}\n"
+            + str(exc)[:7000] + "\n", encoding="utf-8")
+        return 1
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+        raise SystemExit(smoke_test_exe(Path(sys.argv[2])))
     instance_lock = acquire_instance_lock(APP_DIR / "instance.lock")
     if instance_lock is None:
         root = tk.Tk()

@@ -10,10 +10,12 @@ from urllib.parse import urlencode, urlsplit
 
 from google_login import browser_profile, find_browser, SUPPORTED
 from security import is_trusted_linkedin_page, safe_diagnostic
+from process_env import prepare_external_processes
 
 from logic import (has_stop_signal, in_work_hours, local_now, match_score,
                    clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
-                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours)
+                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours,
+                   unique_phrases)
 
 # Restricted account titles are checked as complete headings, never as a
 # keyword occurring anywhere in someone's authored text.
@@ -161,7 +163,7 @@ def check_protection(page):
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
 
-def wait_or_stop(seconds, stop_event, pause_event, status):
+def wait_or_stop(seconds, stop_event, pause_event, status, reason="", preserve_pause_delay=True):
     """Responsive wait that can pause without sending invitations."""
     until = time.monotonic() + seconds
     last_bucket = None
@@ -171,8 +173,11 @@ def wait_or_stop(seconds, stop_event, pause_event, status):
             paused_at = time.monotonic()
             while pause_event.is_set() and not stop_event.is_set():
                 stop_event.wait(.5)
-            # Pausing does not consume the remaining cooldown.
-            until += time.monotonic() - paused_at
+            # Cooldowns may be preserved across a pause, but fixed clock times
+            # (sending hours and midnight quota reset) must not move later.
+            if preserve_pause_delay:
+                until += time.monotonic() - paused_at
+            last_bucket = None  # Replace the stale "Paused" status on resume.
             continue
         remaining = until - time.monotonic()
         if remaining <= 0:
@@ -184,7 +189,8 @@ def wait_or_stop(seconds, stop_event, pause_event, status):
         else:
             bucket = ("minutes", f"{math.ceil(remaining / 60)} minute(s)")
         if bucket != last_bucket:
-            status(f"Next action in {bucket[1]}. You can pause or stop.")
+            prefix = f"{reason} " if reason else ""
+            status(f"{prefix}Next action in {bucket[1]}. You can pause or stop.")
             last_bucket = bucket
         stop_event.wait(min(1, remaining))
     raise StopRun()
@@ -375,13 +381,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         elif unnamed_new_links:
             notify(f"{len(unnamed_new_links)} new profile link(s) on page {page_no} "
                    "lack identifiable names; retaining the page rather than dropping them.")
-        elif named_profile_links or (valid_profile_links and valid_profile_links.issubset(processed)):
-            # Every nonprocessed profile link was identifiable, or the page
-            # consisted entirely of previously completed people.
-            store.set_setting(key, page_no + 1)
         elif valid_profile_links:
-            notify(f"Profile URLs appeared for '{search}', but no member names could be read; "
-                   f"retaining page {page_no} rather than silently losing candidates.")
+            # Every nonprocessed link is named, or all links were processed.
+            store.set_setting(key, page_no + 1)
         else:
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
         notify(f"Queued {added} new matches this pass.")
@@ -541,8 +543,6 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
     # verified introduction, retry the safe inspection without clicking.
     check_protection(page)
-    if "/login" in page.url.lower() or "/authwall" in page.url.lower():
-        raise StopRun("Please sign in again in the browser before restarting.")
     # Never click actions on a redirect, even when it leads outside /in/.
     # A redirect to a feed, a company, or a different member is not the
     # intended recipient. Compare normalized URLs to tolerate query strings.
@@ -729,9 +729,10 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        raise StopRun("Playwright not installed. Run Launch Windows.cmd to install it.")
+        raise StopRun("Playwright not installed. Run Launch_Windows.cmd to install it.")
     data_dir = Path(config["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
+    prepare_external_processes()
     with sync_playwright() as p:
         requested_channel = config.get("browser_channel", "chromium")
         channel = choose_browser_channel(requested_channel, p.chromium.executable_path)
@@ -782,8 +783,8 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             check_protection(page)
             notify("Signed in. Campaign is running.")
             on_update()
-            searches = [s.strip() for s in config["searches"] if s.strip()]
-            match_terms = [s.strip() for s in config["match_terms"] if s.strip()]
+            searches = unique_phrases(config["searches"])
+            match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
             discovery_failures = 0
             while not stop_event.is_set():
@@ -802,12 +803,15 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 now = local_now()
                 if not in_work_hours(now, config["start_hour"], config["end_hour"]):
                     wait_or_stop(seconds_until_work_hours(now, config["start_hour"], config["end_hour"]),
-                                 stop_event, pause_event, notify)
+                                 stop_event, pause_event, notify,
+                                 reason=f"Outside sending hours ({config['start_hour']}:00–{config['end_hour']}:00 Eastern).",
+                                 preserve_pause_delay=False)
                     continue
                 today = store.attempts_today()
                 if today >= config["daily_limit"]:
                     notify(f"Daily cap of {config['daily_limit']} reached. Waiting for tomorrow.")
-                    wait_or_stop(seconds_until_tomorrow(now) + 60, stop_event, pause_event, notify)
+                    wait_or_stop(seconds_until_tomorrow(now) + 60, stop_event, pause_event, notify,
+                                 preserve_pause_delay=False)
                     continue
                 remaining = seconds_until_next_send(now, store.last_attempt_at(), config["cooldown"])
                 if remaining:
