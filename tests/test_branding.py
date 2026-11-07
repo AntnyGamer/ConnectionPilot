@@ -23,6 +23,16 @@ class BrandingTests(unittest.TestCase):
             store.set_setting("ui:searches", "")
             self.assertEqual(main.initial_search_inputs(store), ("", "politics, Rowan"))
 
+    def test_invalid_saved_filter_values_recover_safely(self):
+        app = main.App.__new__(main.App)
+        saved = '{"locations": null, "titles": 55, "schools": "Rowan", "min_score": Infinity}'
+        with patch.object(main.STORE, "setting", return_value=saved):
+            filters = app.load_filters()
+        self.assertEqual(filters["locations"], "")
+        self.assertEqual(filters["titles"], "")
+        self.assertEqual(filters["schools"], "Rowan")
+        self.assertEqual(filters["min_score"], 25)
+
     def test_ui_log_is_bounded_without_erasing_recent_entries(self):
         class LogWidget:
             def __init__(self):
