@@ -128,8 +128,10 @@ def unique_phrases(values) -> list[str]:
 def match_score(snippet: str, terms: list[str] | None = None) -> int:
     """Count distinct matching interest terms, not repeated copies of one term."""
     words = (snippet or "").casefold()
-    unique = {term.casefold() for term in unique_phrases(
-        DEFAULT_MATCH_TERMS if terms is None else terms)}
+    # Normalize and deduplicate in one pass; this runs for every search card.
+    unique = {term.strip().casefold()
+              for term in (DEFAULT_MATCH_TERMS if terms is None else terms)
+              if isinstance(term, str) and term.strip()}
     hits = sum(term in words for term in unique)
     return min(100, hits * 25)
 

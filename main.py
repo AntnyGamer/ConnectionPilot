@@ -505,16 +505,19 @@ class App:
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
-        if STORE.setting("run:matching") != matching_config:
+        matching_changed = STORE.setting("run:matching") != matching_config
+        if matching_changed:
             STORE.requeue_filtered()
             if not searches_reset:
                 STORE.reset_search_pages(searches)
-            STORE.set_setting("run:matching", matching_config)
-        STORE.set_settings({
+        settings = {
             "ui:target": target, "ui:daily": daily, "ui:cooldown": cooldown,
             "ui:searches": "\n".join(searches), "ui:matches": ", ".join(matches),
             "ui:filters": current_filters_json,
-        })
+        }
+        if matching_changed:
+            settings["run:matching"] = matching_config
+        STORE.set_settings(settings)
         self.stop_event.clear()
         self.pause_event.clear()
         self.running = True
