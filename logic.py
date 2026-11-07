@@ -6,9 +6,8 @@ import math
 import unicodedata
 from datetime import datetime, timedelta, time, timezone
 from urllib.parse import urljoin, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
+from eastern_time import TZ
 
-TZ = ZoneInfo("America/New_York")
 SEND_START_HOUR = 8
 SEND_END_HOUR = 20
 
