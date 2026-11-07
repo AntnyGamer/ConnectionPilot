@@ -40,6 +40,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('zone_file.stat().st_size > 50_000', builder)
         self.assertIn('def smoke_test_exe(result_path):', app)
         self.assertIn('page.goto("about:blank", timeout=10000)', app)
+        self.assertIn('prepare_external_processes()', app)
+        process_env = (ROOT / 'process_env.py').read_text()
+        self.assertIn('SetDllDirectoryW(None)', process_env)
 
     def test_uses_existing_playwright_chromium(self):
         with TemporaryDirectory() as tmp:
