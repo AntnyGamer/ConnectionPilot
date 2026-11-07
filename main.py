@@ -17,7 +17,7 @@ from automation import ProtectionScreen, StopRun, run_campaign
 from google_login import close_google_signin, open_google_signin
 from logic import (FILTER_FIELDS, SEND_START_HOUR, SEND_END_HOUR,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
-                   valid_cooldown_seconds, safe_saved_int)
+                   valid_cooldown_seconds, safe_saved_int, unique_phrases)
 from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
@@ -441,8 +441,8 @@ class App:
             cooldown = float(self.cooldown.get())
             if not (1 <= target <= 5000 and 1 <= daily <= 500 and valid_cooldown_seconds(cooldown)):
                 raise ValueError("Campaign setting out of range")
-            searches = [s.strip() for s in self.search_box.get("1.0", "end").splitlines() if s.strip()]
-            matches = [s.strip() for s in self.match_box.get("1.0", "end").split(",") if s.strip()]
+            searches = unique_phrases(self.search_box.get("1.0", "end").splitlines())
+            matches = unique_phrases(self.match_box.get("1.0", "end").split(","))
             if not searches or not matches:
                 raise ValueError("Search and match terms required")
         except (ValueError, AssertionError, tk.TclError):
