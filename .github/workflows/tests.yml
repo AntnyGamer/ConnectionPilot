@@ -1,4 +1,4 @@
-name: Test ConnectionPilot v1.0.6
+name: Test ConnectionPilot v1.0.7
 on:
   push:
   pull_request:
