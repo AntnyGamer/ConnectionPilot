@@ -160,6 +160,23 @@ class LogicTests(unittest.TestCase):
                     self.assertEqual(_match_score_prepared(profile, prepared),
                                      match_score(profile, terms))
 
+    def test_scorer_matches_preoptimization_formula_for_varied_keywords(self):
+        # Independent reference: original distinct-term scoring before the
+        # v1.1.0 hot-path optimizations, including the 100-point cap.
+        import random
+        rng = random.Random(1100)
+        vocabulary = ("politics", "public policy", "government", "rowan",
+                      "campaign", "diplomacy", "senate", "New Jersey", "straße")
+        for _ in range(240):
+            snippet = " ".join(rng.choices(vocabulary, k=rng.randrange(0, 18)))
+            terms = [rng.choice(vocabulary + (" ",)) for _ in range(rng.randrange(0, 16))]
+            terms += ["POLITICS", " politics ", "", None, 4]
+            old_unique = {item.strip().casefold() for item in terms
+                          if isinstance(item, str) and item.strip()}
+            reference = min(100, 25 * sum(term in snippet.casefold() for term in old_unique))
+            with self.subTest(snippet=snippet[:40], count=len(terms)):
+                self.assertEqual(match_score(snippet, terms), reference)
+
     def test_scoring_ceiling_and_empty_filters(self):
         self.assertEqual(match_score(
             'Politics policy government campaign legislation public affairs',
