@@ -18,7 +18,7 @@ LinkedIn prohibits unauthorized automated invitations, regardless of delay or vo
 2. Extract the ZIP. Double-click `Launch_Windows.cmd` to install any missing dependencies and open the app.
 3. If you use Google sign-in: click **Sign in with Google (Chrome / Edge)**, complete LinkedIn's **Continue with Google** in the normal browser window, then close every window of that *dedicated* browser profile before clicking **Start campaign**.
 4. Enter your search phrases, matching terms and optional Advanced filters. Once signed in, one click on **Start campaign** begins the sending workflow; no further connection clicks are requested.
-5. Keep the program and the browser running during sending hours (9 AM–7 PM, New York time).
+5. Keep the program and the browser running during sending hours (8 AM–8 PM, New York time).
 
 The source ZIP is Python source, not a compiled `.exe`. The first source-based launch requires network access to install dependencies. The Chrome or Edge sign-in profile is kept separate from your regular browser profile. ConnectionPilot enables Chromium's browser sandbox explicitly when opening the automated browser rather than relying on Playwright's unsafe default launch setting.
 
@@ -29,7 +29,7 @@ The source ZIP is Python source, not a compiled `.exe`. The first source-based l
 | Campaign goal | 200 | 1–5,000 total confirmed or uncertain attempts |
 | Daily invitation cap | 500 | 1–500 local attempt cap |
 | Cooldown | 90 seconds | 0.1–21,600 seconds, including fractions |
-| Sending window | 9 AM–7 PM Eastern | Fixed |
+| Sending window | 8 AM–8 PM Eastern | Fixed |
 | Advanced filters | Minimum relevance score 25 | Location, role, organization, school, sector, exclusions, degree and score |
 
 Search phrases and relevant profile terms are **empty on a first installation**. Once a campaign has been started, its saved phrases and terms reappear when the app is relaunched; installing a newer EXE does not clear them. Use **Clear campaign data** only if you intend to erase the local invitation history, which can allow previous recipients to be approached again.
