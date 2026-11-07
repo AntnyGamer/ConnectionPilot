@@ -1,4 +1,4 @@
-name: Build branded ConnectionPilot v1.0.5 (Windows)
+name: Build branded ConnectionPilot v1.0.6 (Windows)
 on:
   push:
     branches: [main]
@@ -41,14 +41,14 @@ jobs:
         run: |
           $exe = (Resolve-Path 'dist/ConnectionPilot.exe').Path
           $f = Get-Item $exe
-          if ($f.VersionInfo.ProductName -ne 'ConnectionPilot' -or $f.VersionInfo.FileVersion -ne '1.0.5.0') { throw 'EXE version metadata is incorrect' }
+          if ($f.VersionInfo.ProductName -ne 'ConnectionPilot' -or $f.VersionInfo.FileVersion -ne '1.0.6.0') { throw 'EXE version metadata is incorrect' }
           $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
           if ($null -eq $icon -or $icon.Width -lt 16) { throw 'EXE has no usable icon' }
           Write-Host "Verified icon $($icon.Width)x$($icon.Height), product $($f.VersionInfo.ProductName)"
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v7
         with:
-          name: ConnectionPilot-v1.0.5-Windows-EXE
+          name: ConnectionPilot-v1.0.6-Windows-EXE
           path: dist/ConnectionPilot.exe
           if-no-files-found: error
           retention-days: 30
@@ -67,7 +67,7 @@ jobs:
       - name: Download verified Windows executable
         uses: actions/download-artifact@v8
         with:
-          name: ConnectionPilot-v1.0.5-Windows-EXE
+          name: ConnectionPilot-v1.0.6-Windows-EXE
           path: release
       - name: Verify package and write checksum
         shell: bash
@@ -80,7 +80,7 @@ jobs:
           test -s release/connectionpilot.ico
           (cd release && sha256sum ConnectionPilot.exe > ConnectionPilot.exe.sha256)
           (cd release && sha256sum --check ConnectionPilot.exe.sha256)
-      - name: Publish version v1.0.5 release automatically
+      - name: Publish version v1.0.6 release automatically
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -89,15 +89,15 @@ jobs:
           set -euo pipefail
           # Versioned release tags match the compiled app/EXE metadata.
           # If a tag already exists, do not silently replace a different binary.
-          TAG="v1.0.5"
+          TAG="v1.0.6"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists. Keeping the immutable release unchanged; the new EXE remains available as a workflow artifact."
             exit 0
           fi
           gh release create "$TAG" \
-            "release/ConnectionPilot.exe#ConnectionPilot v1.0.5 for Windows" \
+            "release/ConnectionPilot.exe#ConnectionPilot v1.0.6 for Windows" \
             "release/ConnectionPilot.exe.sha256#SHA-256 checksum" \
             "release/connectionpilot.png#ConnectionPilot logo" \
             "release/connectionpilot.ico#Windows application icon" \
-            --target "$GITHUB_SHA" --title "ConnectionPilot v1.0.5" --latest \
-            --notes "ConnectionPilot v1.0.5 for Windows, built and verified by GitHub Actions from commit $GITHUB_SHA. Fixes search-result processing, restriction detection, data safety and SQLite performance. This executable is unsigned, may trigger SmartScreen, and is not endorsed or approved by LinkedIn."
+            --target "$GITHUB_SHA" --title "ConnectionPilot v1.0.6" --latest \
+            --notes "ConnectionPilot v1.0.6 for Windows, built and verified by GitHub Actions from commit $GITHUB_SHA. Fixes search-result processing, restriction detection, data safety and SQLite performance. This executable is unsigned, may trigger SmartScreen, and is not endorsed or approved by LinkedIn."
