@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlsplit
 
 from google_login import browser_profile, find_browser, SUPPORTED
 from security import is_trusted_linkedin_page, safe_diagnostic
+from process_env import prepare_external_processes
 
 from logic import (has_stop_signal, in_work_hours, local_now, match_score,
                    clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
@@ -737,6 +738,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
         raise StopRun("Playwright not installed. Run Launch_Windows.cmd to install it.")
     data_dir = Path(config["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
+    prepare_external_processes()
     with sync_playwright() as p:
         requested_channel = config.get("browser_channel", "chromium")
         channel = choose_browser_channel(requested_channel, p.chromium.executable_path)
