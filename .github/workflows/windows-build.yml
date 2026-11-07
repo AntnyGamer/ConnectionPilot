@@ -57,6 +57,7 @@ jobs:
           New-Item -ItemType Directory -Path $env:PLAYWRIGHT_BROWSERS_PATH -Force | Out-Null
           $p = Start-Process -FilePath $exe -ArgumentList @('--smoke-test', "`"$result`"") -PassThru
           if (-not $p.WaitForExit(120000)) {
+            if (Test-Path $result) { Get-Content $result }
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             throw 'Packaged EXE did not complete its startup test within 120 seconds'
           }
