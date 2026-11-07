@@ -46,6 +46,7 @@ class EasternTimeTests(unittest.TestCase):
         builder = (root / "scripts/build_windows.py").read_text()
         requirements = (root / "requirements.txt").read_text()
         self.assertIn('"--collect-data", "tzdata"', builder)
+        self.assertIn('"--collect-submodules", "tzdata.zoneinfo"', builder)
         self.assertNotIn('"--collect-all", "tzdata"', builder)
         self.assertIn("tzdata==2026.6", requirements)
 
