@@ -77,6 +77,16 @@ class LogicTests(unittest.TestCase):
         self.assertFalse(names_match("John Smith Jr.", "John Smith Sr."))
         self.assertFalse(names_match("Sarah E Jones (Former)", "Sarah E Jones"))
 
+    def test_normalized_name_matching_agrees_for_repeated_headings(self):
+        from logic import _name_parts, _name_parts_match
+        expected = "Senator Sarah E Jones, Esq."
+        prepared = _name_parts(expected)
+        for shown in ("Sarah Elizabeth Jones", "Sarah E. Jones",
+                      "Sarah A Jones", "Sarah Jones", "Dr. John Smith"):
+            with self.subTest(shown=shown):
+                self.assertEqual(_name_parts_match(prepared, _name_parts(shown)),
+                                 names_match(expected, shown))
+
     def test_name_validation(self):
         self.assertTrue(names_match('José de la Cruz', 'Jose de la Cruz'))
         self.assertFalse(names_match('Jane Public', 'John Public'))

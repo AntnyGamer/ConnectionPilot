@@ -70,31 +70,31 @@ def search_result_name(text: str, label: str = "") -> str | None:
     return None
 
 
-def names_match(discovered: str, displayed: str) -> bool:
-    """Compare one person's name without mistaking credentials for identity."""
-    def normalized(value):
-        value = (value or "").strip()
-        # LinkedIn result links sometimes append a connection badge. Never
-        # mistake it for a part of the member's name.
-        value = re.split(r"\s+[·•]\s+(?=(?:1st|2nd|3rd|premium|verified)\b)",
-                         value, maxsplit=1, flags=re.I)[0]
-        value = re.sub(
-            r"\s*\((?:he|him|she|her|they|them)(?:\s*/\s*(?:he|him|she|her|they|them))+\)\s*$",
-            "", value, flags=re.I)
-        # Only remove unambiguous professional credentials. Keep Jr./Sr. and
-        # numerals; they distinguish real people with otherwise equal names.
-        credential = r"(?:esq\.?|esquire|j\.?\s*d\.?|ll\.?\s*m\.?|m\.?\s*b\.?\s*a\.?|ph\.?\s*d\.?|m\.?\s*d\.?|cpa|pmp)"
-        value = re.sub(r"(?:\s*,?\s+" + credential + r")+\s*$", "", value, flags=re.I)
-        value = unicodedata.normalize("NFKD", value).casefold()
-        value = "".join(c for c in value if not unicodedata.combining(c))
-        words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
-        prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
-                    "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
-        while len(words) >= 3 and words[0] in prefixes:
-            words.pop(0)
-        return words
+def _name_parts(value):
+    """Normalize a member name without dropping identity-distinguishing suffixes."""
+    value = (value or "").strip()
+    # LinkedIn result links sometimes append a connection badge. Never
+    # mistake it for a part of the member's name.
+    value = re.split(r"\s+[·•]\s+(?=(?:1st|2nd|3rd|premium|verified)\b)",
+                     value, maxsplit=1, flags=re.I)[0]
+    value = re.sub(
+        r"\s*\((?:he|him|she|her|they|them)(?:\s*/\s*(?:he|him|she|her|they|them))+\)\s*$",
+        "", value, flags=re.I)
+    # Only remove unambiguous professional credentials. Keep Jr./Sr. and
+    # numerals; they distinguish real people with otherwise equal names.
+    credential = r"(?:esq\.?|esquire|j\.?\s*d\.?|ll\.?\s*m\.?|m\.?\s*b\.?\s*a\.?|ph\.?\s*d\.?|m\.?\s*d\.?|cpa|pmp)"
+    value = re.sub(r"(?:\s*,?\s+" + credential + r")+\s*$", "", value, flags=re.I)
+    value = unicodedata.normalize("NFKD", value).casefold()
+    value = "".join(c for c in value if not unicodedata.combining(c))
+    words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
+    prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
+                "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+    while len(words) >= 3 and words[0] in prefixes:
+        words.pop(0)
+    return words
 
-    expected, actual = normalized(discovered), normalized(displayed)
+
+def _name_parts_match(expected, actual):
     if not expected or not actual:
         return False
     if expected == actual:
@@ -108,6 +108,11 @@ def names_match(discovered: str, displayed: str) -> bool:
         return False
     return all(a == b or (min(len(a), len(b)) == 1 and a[0] == b[0])
                for a, b in zip(expected[1:-1], actual[1:-1]))
+
+
+def names_match(discovered: str, displayed: str) -> bool:
+    """Compare one person's name without mistaking credentials for identity."""
+    return _name_parts_match(_name_parts(discovered), _name_parts(displayed))
 
 
 def unique_phrases(values) -> list[str]:

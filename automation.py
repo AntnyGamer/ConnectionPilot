@@ -13,7 +13,7 @@ from security import is_trusted_linkedin_page, safe_diagnostic
 from process_env import prepare_external_processes
 
 from logic import (has_stop_signal, in_work_hours, local_now, match_score,
-                   clean_terms, names_match, normalize_profile, passes_profile_filters, search_result_name,
+                   clean_terms, _name_parts, _name_parts_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours,
                    unique_phrases)
 
@@ -407,6 +407,10 @@ def _profile_intro(page, expected_name):
 
     Never use an arbitrary sidebar heading or recommendation card as identity.
     """
+    expected_parts = _name_parts(expected_name)
+    def matches_expected(displayed):
+        return _name_parts_match(expected_parts, _name_parts(displayed))
+
     main = page.locator("main").first
     if not main.count():
         return None, "No LinkedIn main profile region found."
@@ -421,7 +425,7 @@ def _profile_intro(page, expected_name):
         title_name = re.split(r"\s+[-–—]\s+", title_match.group(1).strip(), maxsplit=1)[0].strip()
         if title_name.casefold() in {"linkedin", "profile", "linkedin member"}:
             title_name = ""
-        elif not names_match(expected_name, title_name):
+        elif not matches_expected( title_name):
             return None, "Name mismatch: page title identifies another member; nothing clicked."
 
     matching = []
@@ -432,7 +436,7 @@ def _profile_intro(page, expected_name):
         matching = [heading for heading in main.locator(selector).all()[:60]
                     if not heading.locator("xpath=ancestor::aside").count()
                     and heading.is_visible()
-                    and names_match(expected_name, heading.inner_text(timeout=3000).strip())]
+                    and matches_expected( heading.inner_text(timeout=3000).strip())]
         if matching:
             break
     if not matching and title_name:
@@ -442,7 +446,7 @@ def _profile_intro(page, expected_name):
             matching = [node for node in main.locator(selector).all()[:limit]
                         if not node.locator("xpath=ancestor::aside").count()
                         and node.is_visible()
-                        and names_match(expected_name, node.inner_text(timeout=2000).strip())]
+                        and matches_expected( node.inner_text(timeout=2000).strip())]
             if matching:
                 break
     if len(matching) != 1:
@@ -467,7 +471,7 @@ def _profile_intro(page, expected_name):
             # If there was a verified smaller panel, its More action is still
             # a safe fallback; an unrelated Connect action is not.
             headings = current.locator('h1, h2, h3, [role="heading"]').all()[:50]
-            if any(h.is_visible() and not names_match(expected_name, h.inner_text(timeout=2000).strip())
+            if any(h.is_visible() and not matches_expected( h.inner_text(timeout=2000).strip())
                    for h in headings):
                 return (fallback, None) if fallback is not None else (
                     None, "Action panel also contains other headings; nothing clicked.")
