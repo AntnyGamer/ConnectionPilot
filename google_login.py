@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from process_env import prepare_external_processes
 
 LOGIN_URL = "https://www.linkedin.com/login"
 SUPPORTED = ("chrome", "msedge")
@@ -54,6 +55,7 @@ def open_google_signin(data_dir: Path):
     channel, executable = find_browser()
     profile = browser_profile(data_dir, channel)
     profile.mkdir(parents=True, exist_ok=True)
+    prepare_external_processes()
     process = subprocess.Popen([
         executable, f"--user-data-dir={profile}", "--no-first-run",
         "--new-window", LOGIN_URL,
