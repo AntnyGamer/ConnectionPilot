@@ -18,6 +18,7 @@ def build():
             "--add-data", str(ROOT / "assets/connectionpilot.png") + ";assets",
             "--add-data", str(ROOT / "assets/connectionpilot-header.png") + ";assets",
             "--collect-all", "playwright",
+            "--collect-all", "tzdata",  # Windows has no built-in IANA timezone database.
             "--distpath", str(ROOT / "dist"),
             str(ROOT / "main.py")]
     subprocess.check_call(args, cwd=ROOT)
