@@ -9,6 +9,8 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/New_York")
+SEND_START_HOUR = 8
+SEND_END_HOUR = 20
 
 # Used by match_score when no terms are provided explicitly; not a default
 # value for the application's search-term text field.
@@ -112,7 +114,7 @@ def names_match(discovered: str, displayed: str) -> bool:
 def match_score(snippet: str, terms: list[str] | None = None) -> int:
     """Local heuristic, not an AI judgment. Must match at least one interest term."""
     words = (snippet or "").casefold()
-    hits = sum(1 for term in (terms or DEFAULT_MATCH_TERMS) if term.strip() and term.strip().casefold() in words)
+    hits = sum(1 for term in (DEFAULT_MATCH_TERMS if terms is None else terms) if term.strip() and term.strip().casefold() in words)
     return min(100, hits * 25)
 
 
@@ -221,7 +223,7 @@ def valid_cooldown_seconds(value) -> bool:
     return math.isfinite(seconds) and MIN_COOLDOWN_SECONDS <= seconds <= MAX_COOLDOWN_SECONDS
 
 
-def theoretical_daily_capacity(cooldown_seconds: float, start_hour=9, end_hour=19) -> int:
+def theoretical_daily_capacity(cooldown_seconds: float, start_hour=SEND_START_HOUR, end_hour=SEND_END_HOUR) -> int:
     """Arithmetic pacing upper bound only; browsing takes additional time."""
     total_seconds = (end_hour - start_hour) * 3600
     if total_seconds <= 0 or not valid_cooldown_seconds(cooldown_seconds):
