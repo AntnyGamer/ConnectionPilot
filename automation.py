@@ -381,13 +381,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         elif unnamed_new_links:
             notify(f"{len(unnamed_new_links)} new profile link(s) on page {page_no} "
                    "lack identifiable names; retaining the page rather than dropping them.")
-        elif named_profile_links or (valid_profile_links and valid_profile_links.issubset(processed)):
-            # Every nonprocessed profile link was identifiable, or the page
-            # consisted entirely of previously completed people.
-            store.set_setting(key, page_no + 1)
         elif valid_profile_links:
-            notify(f"Profile URLs appeared for '{search}', but no member names could be read; "
-                   f"retaining page {page_no} rather than silently losing candidates.")
+            # Every nonprocessed link is named, or all links were processed.
+            store.set_setting(key, page_no + 1)
         else:
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
         notify(f"Queued {added} new matches this pass.")
@@ -547,8 +543,6 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
     # verified introduction, retry the safe inspection without clicking.
     check_protection(page)
-    if "/login" in page.url.lower() or "/authwall" in page.url.lower():
-        raise StopRun("Please sign in again in the browser before restarting.")
     # Never click actions on a redirect, even when it leads outside /in/.
     # A redirect to a feed, a company, or a different member is not the
     # intended recipient. Compare normalized URLs to tolerate query strings.

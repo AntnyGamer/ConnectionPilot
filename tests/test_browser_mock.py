@@ -1197,6 +1197,24 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'skipped')
         self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
 
+    def test_legitimate_profile_slug_with_login_does_not_trigger_authwall(self):
+        url = 'https://www.linkedin.com/in/login-specialist/'
+        doc = html('<button id="connect">Connect</button>')
+        class LocalPage:
+            def __init__(self, page):
+                self.page = page
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+            def __getattr__(self, key):
+                return url if key == 'url' else getattr(self.page, key)
+        paused = threading.Event()
+        paused.set()
+        result, reason = send_one(
+            LocalPage(self.page), {'url': url, 'name': 'Test Example'},
+            self.db, lambda _: None, pause_event=paused)
+        self.assertEqual(result, 'paused', reason)
+        self.assertEqual(self.db.attempts_today(), 0)
+
     def test_pause_before_click_keeps_queue(self):
         doc = html('''<button id="c" onclick="this.textContent='Pending'">Connect</button>''')
         class LocalPage:

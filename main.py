@@ -497,15 +497,18 @@ class App:
         # discard only leads that have never been attempted.
         old_terms = {s.strip().casefold() for s in (previous_searches or "").splitlines() if s.strip()}
         new_terms = {s.casefold() for s in searches}
+        searches_reset = False
         if previous_searches is not None and not old_terms.issubset(new_terms):
             removed = STORE.discard_stale_leads()
             STORE.reset_search_pages(searches)
+            searches_reset = True
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
         if STORE.setting("run:matching") != matching_config:
             STORE.requeue_filtered()
-            STORE.reset_search_pages(searches)
+            if not searches_reset:
+                STORE.reset_search_pages(searches)
             STORE.set_setting("run:matching", matching_config)
         STORE.set_settings({
             "ui:target": target, "ui:daily": daily, "ui:cooldown": cooldown,
