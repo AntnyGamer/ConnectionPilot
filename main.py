@@ -607,9 +607,15 @@ def smoke_test_exe(result_path):
 
         stage("assets validated")
         from logic import TZ, local_now
+        from eastern_time import eastern_zone
         if local_now().tzinfo != TZ:
             raise RuntimeError("Eastern timezone data unavailable in packaged EXE")
 
+        with (Path(sys._MEIPASS) / "zoneinfo" / "America" / "New_York").open("rb") as zone:
+            if zone.seek(0, 2) > 50_000:
+                raise RuntimeError("Packaged Eastern timezone data exceeds 50 KB")
+        if eastern_zone().key != "America/New_York":
+            raise RuntimeError("Bundled Eastern timezone cannot be loaded")
         stage("timezone validated")
         from tempfile import TemporaryDirectory
         from automation import browser_launch_settings, choose_browser_channel
