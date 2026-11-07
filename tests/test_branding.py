@@ -23,6 +23,20 @@ class BrandingTests(unittest.TestCase):
             store.set_setting("ui:searches", "")
             self.assertEqual(main.initial_search_inputs(store), ("", "politics, Rowan"))
 
+    def test_unwritable_app_data_shows_error_without_deleting_data(self):
+        import sqlite3
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as folder:
+            for error in (PermissionError("Access is denied"),
+                          sqlite3.DatabaseError("database file is malformed")):
+                with self.subTest(error=type(error).__name__), \\
+                     patch("main.Store", side_effect=error), \\
+                     patch("main._startup_storage_error") as alert:
+                    with self.assertRaises(SystemExit):
+                        main.initialize_store(Path(folder))
+                    alert.assert_called_once()
+                    self.assertIn("data has not been deleted", alert.call_args.args[0])
+
     def test_invalid_saved_filter_values_recover_safely(self):
         app = main.App.__new__(main.App)
         saved = '{"locations": null, "titles": 55, "schools": "Rowan", "min_score": Infinity}'
