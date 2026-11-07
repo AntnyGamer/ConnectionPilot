@@ -178,6 +178,37 @@ class StorageTests(unittest.TestCase):
         self.db = Store(Path(self.tmp.name) / 'test.sqlite3')
     def tearDown(self):
         self.tmp.cleanup()
+    def test_foreign_key_constraint_is_enforced_on_every_connection(self):
+        import sqlite3
+        with self.db._conn() as db:
+            self.assertEqual(db.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("INSERT INTO attempts (url, initiated_at, result) VALUES (?,?,?)",
+                           ("https://www.linkedin.com/in/not-discovered/",
+                            "2026-11-02T10:00:00-05:00", "sent"))
+
+    def test_queued_count_never_includes_already_attempted_profiles(self):
+        url = "https://www.linkedin.com/in/queued-after-attempt/"
+        self.db.add(url, "Already Attempted", "government", 25)
+        self.db.mark(url, "uncertain", "Potential invitation")
+        # A stale queued status does not make the candidate safe to retry.
+        self.db.mark(url, "queued", "Stale status")
+        self.assertEqual(self.db.queued_count(), 0)
+        self.assertIsNone(self.db.next_profile())
+
+    def test_search_change_discards_unattempted_skips_but_not_attempts(self):
+        base = "https://www.linkedin.com/in/"
+        self.db.add(base + "unattempted-skipped/", "Skipped", "policy", 25)
+        self.db.mark(base + "unattempted-skipped/", "skipped", "Name mismatch: changed layout")
+        self.db.add(base + "unattempted-filtered/", "Filtered", "policy", 25)
+        self.db.mark(base + "unattempted-filtered/", "filtered", "Old search terms")
+        self.db.add(base + "attempted/", "Attempted", "policy", 25)
+        self.db.mark(base + "attempted/", "uncertain", "Possible invitation")
+        self.assertEqual(self.db.discard_stale_leads(), 2)
+        self.assertTrue(self.db.has_attempt(base + "attempted/"))
+        self.assertEqual(self.db.total_attempts(), 1)
+        self.assertEqual(self.db.retry_safe_skips(), 0)
+
     def test_dedupe_and_order(self):
         a='https://www.linkedin.com/in/alice/'
         b='https://www.linkedin.com/in/bob/'
