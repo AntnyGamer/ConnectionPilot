@@ -3,10 +3,9 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from eastern_time import TZ
 from security import restrict_posix_data
 
-TZ = ZoneInfo("America/New_York")
 
 class Store:
     def __init__(self, path: Path):
