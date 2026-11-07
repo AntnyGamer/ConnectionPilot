@@ -12,7 +12,7 @@ from google_login import browser_profile, find_browser, SUPPORTED
 from security import is_trusted_linkedin_page, safe_diagnostic
 from process_env import prepare_external_processes
 
-from logic import (has_stop_signal, in_work_hours, local_now, match_score,
+from logic import (has_stop_signal, in_work_hours, local_now, _match_score_prepared, _normalized_score_terms,
                    clean_terms, _name_parts, _name_parts_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours,
                    unique_phrases)
@@ -209,7 +209,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
     settings = filters or {}
-    # Settings do not change during discovery; avoid converting them for each card.
+    # Matching terms and settings do not change during this discovery pass.
+    score_terms = _normalized_score_terms(match_terms)
     raw_score = settings.get("min_score", 1)
     try:
         minimum_score = max(0, int(raw_score))
@@ -357,7 +358,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                         and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
                                       snippet, re.I)):
                     continue
-                score = match_score(snippet, match_terms)
+                score = _match_score_prepared(snippet, score_terms)
                 if minimum_score is None:
                     raise ValueError("Invalid profile minimum score")
                 if score < minimum_score:

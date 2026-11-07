@@ -130,13 +130,15 @@ def unique_phrases(values) -> list[str]:
     return result
 
 
-def match_score(snippet: str, terms: list[str] | None = None) -> int:
-    """Count distinct matching interest terms, not repeated copies of one term."""
+def _normalized_score_terms(terms):
+    """Prepare fixed keyword terms once for a batch of profile cards."""
+    return {term.strip().casefold()
+            for term in (DEFAULT_MATCH_TERMS if terms is None else terms)
+            if isinstance(term, str) and term.strip()}
+
+
+def _match_score_prepared(snippet, unique):
     words = (snippet or "").casefold()
-    # Normalize and deduplicate in one pass; this runs for every search card.
-    unique = {term.strip().casefold()
-              for term in (DEFAULT_MATCH_TERMS if terms is None else terms)
-              if isinstance(term, str) and term.strip()}
     # Four distinct matches already reach the 100-point ceiling.
     hits = 0
     for term in unique:
@@ -145,6 +147,11 @@ def match_score(snippet: str, terms: list[str] | None = None) -> int:
             if hits == 4:
                 return 100
     return hits * 25
+
+
+def match_score(snippet: str, terms: list[str] | None = None) -> int:
+    """Count distinct matching interest terms, not repeated copies of one term."""
+    return _match_score_prepared(snippet, _normalized_score_terms(terms))
 
 
 def has_stop_signal(text: str) -> bool:

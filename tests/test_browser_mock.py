@@ -3,8 +3,10 @@ import unittest
 import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from storage import Store
+from logic import _normalized_score_terms
 from automation import ProtectionScreen, check_protection, collect_results, send_one
 
 try:
@@ -403,9 +405,12 @@ class BrowserMockTests(unittest.TestCase):
             def goto(self, *args, **kwargs): self.p.set_content(doc)
             def __getattr__(self, key): return MOCK_URL if key == "url" else getattr(self.p, key)
         pg = SearchPage(self.page)
-        added = collect_results(pg, self.db, ['political science'], ['politic', 'policy'],
-                                threading.Event(), lambda _: None, 200,
-                                {'min_score': 25, 'exclude': 'cryptocurrency'})
+        with patch('automation._normalized_score_terms',
+                   wraps=_normalized_score_terms) as prepared:
+            added = collect_results(pg, self.db, ['political science'], ['politic', 'policy'],
+                                    threading.Event(), lambda _: None, 200,
+                                    {'min_score': 25, 'exclude': 'cryptocurrency'})
+            prepared.assert_called_once_with(['politic', 'policy'])
         self.assertEqual(added, 1)
         self.assertEqual(self.db.next_profile()['url'], 'https://www.linkedin.com/in/legislator-1/')
 

@@ -146,6 +146,20 @@ class LogicTests(unittest.TestCase):
                          ['nj', 'policy'])
         self.assertEqual(clean_terms(None), [])
 
+    def test_batch_keyword_scoring_matches_public_api(self):
+        from logic import _normalized_score_terms, _match_score_prepared
+        profiles = ('politics public policy government campaign diplomacy',
+                    'ROWAN university', 'artist and teacher', '', 'POLITICS')
+        keywords = ([' politics ', 'POLITICS', 'policy', 'government',
+                     'campaign', 'diplomacy', None],
+                    ['rowan'], [], ['POLITICS', 'politics'], None)
+        for terms in keywords:
+            prepared = _normalized_score_terms(terms)
+            for profile in profiles:
+                with self.subTest(profile=profile, terms=terms):
+                    self.assertEqual(_match_score_prepared(profile, prepared),
+                                     match_score(profile, terms))
+
     def test_scoring_ceiling_and_empty_filters(self):
         self.assertEqual(match_score(
             'Politics policy government campaign legislation public affairs',
