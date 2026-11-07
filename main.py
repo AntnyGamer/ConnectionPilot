@@ -38,7 +38,7 @@ from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
 APP_DIR = Path.home() / "ConnectionPilot"
-APP_VERSION = "v1.0.7"
+APP_VERSION = "v1.1.0"
 
 
 def _startup_storage_error(message):
@@ -500,7 +500,10 @@ class App:
         searches_reset = False
         if previous_searches is not None and not old_terms.issubset(new_terms):
             removed = STORE.discard_stale_leads()
-            STORE.reset_search_pages(searches)
+            # Removing a search invalidates its cursor. Clear both old and
+            # current phrases so re-adding a removed search starts at page 1.
+            prior_searches = [s.strip() for s in previous_searches.splitlines() if s.strip()]
+            STORE.reset_search_pages([*prior_searches, *searches])
             searches_reset = True
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
@@ -510,6 +513,12 @@ class App:
             STORE.requeue_filtered()
             if not searches_reset:
                 STORE.reset_search_pages(searches)
+        elif previous_searches is not None and not searches_reset:
+            # A newly added phrase may retain a cursor from an older version
+            # of the app, even though it wasn't in the last saved search list.
+            new_searches = [s for s in searches if s.casefold() not in old_terms]
+            if new_searches:
+                STORE.reset_search_pages(new_searches)
         settings = {
             "ui:target": target, "ui:daily": daily, "ui:cooldown": cooldown,
             "ui:searches": "\n".join(searches), "ui:matches": ", ".join(matches),

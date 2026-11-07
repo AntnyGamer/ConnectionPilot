@@ -39,6 +39,65 @@ class BrandingTests(unittest.TestCase):
                     alert.assert_called_once()
                     self.assertIn("data has not been deleted", alert.call_args.args[0])
 
+    def test_removing_search_clears_old_cursors_even_if_readded_later(self):
+        import json
+        import threading
+        from tempfile import TemporaryDirectory
+        from unittest.mock import MagicMock
+        from storage import Store
+
+        with TemporaryDirectory() as directory:
+            db = Store(Path(directory) / "search.sqlite3")
+            filters = {"degree": "Any", "min_score": 0}
+            db.set_settings({
+                "ui:searches": "Policy\ngovernment",
+                "run:matching": json.dumps(
+                    {"filters": filters, "terms": ["policy"]}, sort_keys=True),
+                "page:Policy": "7",
+                "page:government": "5",
+                "page:policy": "3",
+            })
+            app = main.App.__new__(main.App)
+            app.running = False
+            app.filters = filters
+            app.target = MagicMock()
+            app.target.get.return_value = 100
+            app.daily = MagicMock()
+            app.daily.get.return_value = 100
+            app.cooldown = MagicMock()
+            app.cooldown.get.return_value = 90
+            app.search_box = MagicMock()
+            app.search_box.get.return_value = "policy\n"
+            app.match_box = MagicMock()
+            app.match_box.get.return_value = "policy"
+            app.stop_event = threading.Event()
+            app.pause_event = threading.Event()
+            app.emit = MagicMock()
+            app.work = MagicMock()
+            for name in ("start_btn", "signin_btn", "retry_btn",
+                         "reset_btn", "pause_btn", "stop_btn"):
+                setattr(app, name, MagicMock())
+
+            with patch("main.STORE", db), patch("main.threading.Thread") as worker:
+                app.start()
+            worker.assert_called_once()
+            for term in ("Policy", "government", "policy"):
+                self.assertEqual(db.setting("page:" + term, "1"), "1")
+            self.assertEqual(db.setting("ui:searches"), "policy")
+
+            # A previously removed search may still have a cursor saved by
+            # older app versions. Re-adding it must restart only that phrase.
+            db.set_setting("page:policy", "8")
+            db.set_setting("page:government", "6")
+            app.running = False
+            app.search_box.get.return_value = "policy\ngovernment"
+            with patch("main.STORE", db), patch("main.threading.Thread") as worker:
+                app.start()
+            worker.assert_called_once()
+            self.assertEqual(db.setting("page:government", "1"), "1")
+            self.assertEqual(db.setting("page:policy"), "8")
+            self.assertEqual(db.setting("ui:searches"), "policy\ngovernment")
+
     def test_invalid_saved_filter_values_recover_safely(self):
         app = main.App.__new__(main.App)
         saved = '{"locations": null, "titles": 55, "schools": "Rowan", "min_score": Infinity}'
@@ -134,13 +193,13 @@ class BrandingTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/windows-build.yml").read_text()
         win_version = (root / "assets/connectionpilot_version.txt").read_text()
-        self.assertEqual(main.APP_VERSION, "v1.0.7")
-        self.assertIn("filevers=(1, 0, 7, 0)", win_version)
-        self.assertIn("prodvers=(1, 0, 7, 0)", win_version)
-        self.assertEqual(win_version.count("'1.0.7.0'"), 2)
-        self.assertIn("FileVersion -ne '1.0.7.0'", workflow)
-        self.assertIn('TAG="v1.0.7"', workflow)
-        self.assertIn('ConnectionPilot-v1.0.7-Windows-EXE', workflow)
+        self.assertEqual(main.APP_VERSION, "v1.1.0")
+        self.assertIn("filevers=(1, 1, 0, 0)", win_version)
+        self.assertIn("prodvers=(1, 1, 0, 0)", win_version)
+        self.assertEqual(win_version.count("'1.1.0.0'"), 2)
+        self.assertIn("FileVersion -ne '1.1.0.0'", workflow)
+        self.assertIn('TAG="v1.1.0"', workflow)
+        self.assertIn('ConnectionPilot-v1.1.0-Windows-EXE', workflow)
 
     def test_assets_present(self):
         for name in ('connectionpilot.png', 'connectionpilot-header.png',

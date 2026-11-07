@@ -70,31 +70,31 @@ def search_result_name(text: str, label: str = "") -> str | None:
     return None
 
 
-def names_match(discovered: str, displayed: str) -> bool:
-    """Compare one person's name without mistaking credentials for identity."""
-    def normalized(value):
-        value = (value or "").strip()
-        # LinkedIn result links sometimes append a connection badge. Never
-        # mistake it for a part of the member's name.
-        value = re.split(r"\s+[·•]\s+(?=(?:1st|2nd|3rd|premium|verified)\b)",
-                         value, maxsplit=1, flags=re.I)[0]
-        value = re.sub(
-            r"\s*\((?:he|him|she|her|they|them)(?:\s*/\s*(?:he|him|she|her|they|them))+\)\s*$",
-            "", value, flags=re.I)
-        # Only remove unambiguous professional credentials. Keep Jr./Sr. and
-        # numerals; they distinguish real people with otherwise equal names.
-        credential = r"(?:esq\.?|esquire|j\.?\s*d\.?|ll\.?\s*m\.?|m\.?\s*b\.?\s*a\.?|ph\.?\s*d\.?|m\.?\s*d\.?|cpa|pmp)"
-        value = re.sub(r"(?:\s*,?\s+" + credential + r")+\s*$", "", value, flags=re.I)
-        value = unicodedata.normalize("NFKD", value).casefold()
-        value = "".join(c for c in value if not unicodedata.combining(c))
-        words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
-        prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
-                    "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
-        while len(words) >= 3 and words[0] in prefixes:
-            words.pop(0)
-        return words
+def _name_parts(value):
+    """Normalize a member name without dropping identity-distinguishing suffixes."""
+    value = (value or "").strip()
+    # LinkedIn result links sometimes append a connection badge. Never
+    # mistake it for a part of the member's name.
+    value = re.split(r"\s+[·•]\s+(?=(?:1st|2nd|3rd|premium|verified)\b)",
+                     value, maxsplit=1, flags=re.I)[0]
+    value = re.sub(
+        r"\s*\((?:he|him|she|her|they|them)(?:\s*/\s*(?:he|him|she|her|they|them))+\)\s*$",
+        "", value, flags=re.I)
+    # Only remove unambiguous professional credentials. Keep Jr./Sr. and
+    # numerals; they distinguish real people with otherwise equal names.
+    credential = r"(?:esq\.?|esquire|j\.?\s*d\.?|ll\.?\s*m\.?|m\.?\s*b\.?\s*a\.?|ph\.?\s*d\.?|m\.?\s*d\.?|cpa|pmp)"
+    value = re.sub(r"(?:\s*,?\s+" + credential + r")+\s*$", "", value, flags=re.I)
+    value = unicodedata.normalize("NFKD", value).casefold()
+    value = "".join(c for c in value if not unicodedata.combining(c))
+    words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
+    prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
+                "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+    while len(words) >= 3 and words[0] in prefixes:
+        words.pop(0)
+    return words
 
-    expected, actual = normalized(discovered), normalized(displayed)
+
+def _name_parts_match(expected, actual):
     if not expected or not actual:
         return False
     if expected == actual:
@@ -108,6 +108,11 @@ def names_match(discovered: str, displayed: str) -> bool:
         return False
     return all(a == b or (min(len(a), len(b)) == 1 and a[0] == b[0])
                for a, b in zip(expected[1:-1], actual[1:-1]))
+
+
+def names_match(discovered: str, displayed: str) -> bool:
+    """Compare one person's name without mistaking credentials for identity."""
+    return _name_parts_match(_name_parts(discovered), _name_parts(displayed))
 
 
 def unique_phrases(values) -> list[str]:
@@ -125,15 +130,28 @@ def unique_phrases(values) -> list[str]:
     return result
 
 
+def _normalized_score_terms(terms):
+    """Prepare fixed keyword terms once for a batch of profile cards."""
+    return {term.strip().casefold()
+            for term in (DEFAULT_MATCH_TERMS if terms is None else terms)
+            if isinstance(term, str) and term.strip()}
+
+
+def _match_score_prepared(snippet, unique):
+    words = (snippet or "").casefold()
+    # Four distinct matches already reach the 100-point ceiling.
+    hits = 0
+    for term in unique:
+        if term in words:
+            hits += 1
+            if hits == 4:
+                return 100
+    return hits * 25
+
+
 def match_score(snippet: str, terms: list[str] | None = None) -> int:
     """Count distinct matching interest terms, not repeated copies of one term."""
-    words = (snippet or "").casefold()
-    # Normalize and deduplicate in one pass; this runs for every search card.
-    unique = {term.strip().casefold()
-              for term in (DEFAULT_MATCH_TERMS if terms is None else terms)
-              if isinstance(term, str) and term.strip()}
-    hits = sum(term in words for term in unique)
-    return min(100, hits * 25)
+    return _match_score_prepared(snippet, _normalized_score_terms(terms))
 
 
 def has_stop_signal(text: str) -> bool:
@@ -209,14 +227,16 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
         return False, "Profile below the minimum interest match score."
     header = " ".join((header_text or "").casefold().split())
     for field in FILTER_FIELDS:
-        terms = clean_terms(f.get(field))
+        raw_terms = f.get(field)
+        if not raw_terms:
+            continue
+        terms = clean_terms(raw_terms)
         # Check location and role in the person's introduction, not references
         # to earlier employers, schools, or unrelated people later on the page.
         source = header if field in ("locations", "titles") else text
         if terms and not any(term in source for term in terms):
             return False, f"No visible match for {field} filter."
-    excluded = clean_terms(f.get("exclude"))
-    if any(term in text for term in excluded):
+    if f.get("exclude") and any(term in text for term in clean_terms(f["exclude"])):
         return False, "Profile contains an excluded keyword."
     degree = str(f.get("degree", "Any"))
     if degree != "Any":

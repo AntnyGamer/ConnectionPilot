@@ -77,6 +77,16 @@ class LogicTests(unittest.TestCase):
         self.assertFalse(names_match("John Smith Jr.", "John Smith Sr."))
         self.assertFalse(names_match("Sarah E Jones (Former)", "Sarah E Jones"))
 
+    def test_normalized_name_matching_agrees_for_repeated_headings(self):
+        from logic import _name_parts, _name_parts_match
+        expected = "Senator Sarah E Jones, Esq."
+        prepared = _name_parts(expected)
+        for shown in ("Sarah Elizabeth Jones", "Sarah E. Jones",
+                      "Sarah A Jones", "Sarah Jones", "Dr. John Smith"):
+            with self.subTest(shown=shown):
+                self.assertEqual(_name_parts_match(prepared, _name_parts(shown)),
+                                 names_match(expected, shown))
+
     def test_name_validation(self):
         self.assertTrue(names_match('José de la Cruz', 'Jose de la Cruz'))
         self.assertFalse(names_match('Jane Public', 'John Public'))
@@ -135,6 +145,50 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(clean_terms([' NJ ', 'nj', None, 42, 'policy', 'POLICY']),
                          ['nj', 'policy'])
         self.assertEqual(clean_terms(None), [])
+
+    def test_batch_keyword_scoring_matches_public_api(self):
+        from logic import _normalized_score_terms, _match_score_prepared
+        profiles = ('politics public policy government campaign diplomacy',
+                    'ROWAN university', 'artist and teacher', '', 'POLITICS')
+        keywords = ([' politics ', 'POLITICS', 'policy', 'government',
+                     'campaign', 'diplomacy', None],
+                    ['rowan'], [], ['POLITICS', 'politics'], None)
+        for terms in keywords:
+            prepared = _normalized_score_terms(terms)
+            for profile in profiles:
+                with self.subTest(profile=profile, terms=terms):
+                    self.assertEqual(_match_score_prepared(profile, prepared),
+                                     match_score(profile, terms))
+
+    def test_scorer_matches_preoptimization_formula_for_varied_keywords(self):
+        # Independent reference: original distinct-term scoring before the
+        # v1.1.0 hot-path optimizations, including the 100-point cap.
+        import random
+        rng = random.Random(1100)
+        vocabulary = ("politics", "public policy", "government", "rowan",
+                      "campaign", "diplomacy", "senate", "New Jersey", "straße")
+        for _ in range(240):
+            snippet = " ".join(rng.choices(vocabulary, k=rng.randrange(0, 18)))
+            terms = [rng.choice(vocabulary + (" ",)) for _ in range(rng.randrange(0, 16))]
+            terms += ["POLITICS", " politics ", "", None, 4]
+            old_unique = {item.strip().casefold() for item in terms
+                          if isinstance(item, str) and item.strip()}
+            reference = min(100, 25 * sum(term in snippet.casefold() for term in old_unique))
+            with self.subTest(snippet=snippet[:40], count=len(terms)):
+                self.assertEqual(match_score(snippet, terms), reference)
+
+    def test_scoring_ceiling_and_empty_filters(self):
+        self.assertEqual(match_score(
+            'Politics policy government campaign legislation public affairs',
+            ['politics', 'policy', 'government', 'campaign', 'legislation', 'public affairs']), 100)
+        self.assertEqual(match_score('politics policy', ['politics', 'policy']), 50)
+        self.assertTrue(passes_profile_filters(
+            'Policy analyst in New Jersey', 'Policy Analyst',
+            {'locations': '', 'titles': [], 'schools': None, 'exclude': '',
+             'min_score': 0, 'degree': 'Any'}, [])[0])
+        self.assertFalse(passes_profile_filters(
+            'Policy analyst in New Jersey', 'Policy Analyst',
+            {'exclude': 'policy', 'min_score': 0}, [])[0])
 
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
