@@ -25,6 +25,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('Keeping the immutable release unchanged', workflow)
         self.assertIn('exit 0', workflow)
 
+    def test_exe_smoke_validation_blocks_artifact_publication(self):
+        workflow = (ROOT / '.github/workflows/windows-build.yml').read_text()
+        builder = (ROOT / 'scripts/build_windows.py').read_text()
+        app = (ROOT / 'main.py').read_text()
+        self.assertIn('Smoke-test the actual packaged EXE offline', workflow)
+        self.assertIn('PLAYWRIGHT_BROWSERS_PATH', workflow)
+        self.assertIn('ConnectionPilot Fresh User', workflow)
+        self.assertIn('--smoke-test', workflow)
+        self.assertLess(workflow.index('Smoke-test the actual packaged EXE offline'),
+                        workflow.index('Upload Windows EXE'))
+        self.assertIn('"--collect-all", "tzdata"', builder)
+        self.assertIn('def smoke_test_exe(result_path):', app)
+        self.assertIn('page.goto("about:blank")', app)
+
     def test_uses_existing_playwright_chromium(self):
         with TemporaryDirectory() as tmp:
             executable = Path(tmp) / 'chrome.exe'
