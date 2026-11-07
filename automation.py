@@ -734,7 +734,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        raise StopRun("Playwright not installed. Run Launch Windows.cmd to install it.")
+        raise StopRun("Playwright not installed. Run Launch_Windows.cmd to install it.")
     data_dir = Path(config["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
