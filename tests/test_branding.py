@@ -39,6 +39,52 @@ class BrandingTests(unittest.TestCase):
                     alert.assert_called_once()
                     self.assertIn("data has not been deleted", alert.call_args.args[0])
 
+    def test_removing_search_clears_old_cursors_even_if_readded_later(self):
+        import json
+        import threading
+        from tempfile import TemporaryDirectory
+        from unittest.mock import MagicMock
+        from storage import Store
+
+        with TemporaryDirectory() as directory:
+            db = Store(Path(directory) / "search.sqlite3")
+            filters = {"degree": "Any", "min_score": 0}
+            db.set_settings({
+                "ui:searches": "Policy\\ngovernment",
+                "run:matching": json.dumps(
+                    {"filters": filters, "terms": ["policy"]}, sort_keys=True),
+                "page:Policy": "7",
+                "page:government": "5",
+                "page:policy": "3",
+            })
+            app = main.App.__new__(main.App)
+            app.running = False
+            app.filters = filters
+            app.target = MagicMock()
+            app.target.get.return_value = 100
+            app.daily = MagicMock()
+            app.daily.get.return_value = 100
+            app.cooldown = MagicMock()
+            app.cooldown.get.return_value = 90
+            app.search_box = MagicMock()
+            app.search_box.get.return_value = "policy\\n"
+            app.match_box = MagicMock()
+            app.match_box.get.return_value = "policy"
+            app.stop_event = threading.Event()
+            app.pause_event = threading.Event()
+            app.emit = MagicMock()
+            app.work = MagicMock()
+            for name in ("start_btn", "signin_btn", "retry_btn",
+                         "reset_btn", "pause_btn", "stop_btn"):
+                setattr(app, name, MagicMock())
+
+            with patch("main.STORE", db), patch("main.threading.Thread") as worker:
+                app.start()
+            worker.assert_called_once()
+            for term in ("Policy", "government", "policy"):
+                self.assertEqual(db.setting("page:" + term, "1"), "1")
+            self.assertEqual(db.setting("ui:searches"), "policy")
+
     def test_invalid_saved_filter_values_recover_safely(self):
         app = main.App.__new__(main.App)
         saved = '{"locations": null, "titles": 55, "schools": "Rowan", "min_score": Infinity}'

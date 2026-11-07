@@ -500,7 +500,10 @@ class App:
         searches_reset = False
         if previous_searches is not None and not old_terms.issubset(new_terms):
             removed = STORE.discard_stale_leads()
-            STORE.reset_search_pages(searches)
+            # Removing a search invalidates its cursor. Clear both old and
+            # current phrases so re-adding a removed search starts at page 1.
+            prior_searches = [s.strip() for s in previous_searches.splitlines() if s.strip()]
+            STORE.reset_search_pages([*prior_searches, *searches])
             searches_reset = True
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
