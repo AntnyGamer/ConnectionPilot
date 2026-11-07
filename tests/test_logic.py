@@ -5,7 +5,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from logic import (has_stop_signal, names_match, search_result_name, in_work_hours, local_now, match_score, normalize_profile,
                    passes_profile_filters, theoretical_daily_capacity, valid_cooldown_seconds,
-                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int)
+                   seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int,
+                   unique_phrases)
 from storage import Store
 
 TZ = ZoneInfo("America/New_York")
@@ -122,6 +123,10 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(match_score('Photographer and chef'), 0)
         self.assertEqual(match_score('ROWAN UNIVERSITY staff', ['rowan']), 25)
         self.assertEqual(match_score('Public Policy Analyst', []), 0)
+        self.assertEqual(match_score('politics', ['politics', 'POLITICS', 'politics']), 25)
+        self.assertEqual(match_score('politics government', ['politics', 'POLITICS', 'government']), 50)
+        self.assertEqual(unique_phrases([' NJ policy ', '', 'nj POLICY', 'Rowan', 'rowan ']),
+                         ['NJ policy', 'Rowan'])
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
         self.assertTrue(has_stop_signal('Please complete CAPTCHA'))
