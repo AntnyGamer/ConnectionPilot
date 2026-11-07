@@ -22,7 +22,7 @@ class EasternTimeTests(unittest.TestCase):
         self.assertEqual((before.hour, before.minute, before.tzname()), (1, 59, "EST"))
         self.assertEqual((after.hour, after.minute, after.tzname()), (3, 0, "EDT"))
         self.assertEqual(seconds_until_work_hours(before, 8, 20), 18060)
-        self.assertEqual(seconds_until_tomorrow(before), 61260)
+        self.assertEqual(seconds_until_tomorrow(before), 75660)
 
     def test_fall_back_repeats_hour_with_distinct_folds(self):
         first = datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc).astimezone(TZ)
