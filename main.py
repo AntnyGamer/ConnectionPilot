@@ -15,7 +15,7 @@ from tkinter import messagebox, ttk
 
 from automation import ProtectionScreen, StopRun, run_campaign
 from google_login import close_google_signin, open_google_signin
-from logic import (FILTER_FIELDS,
+from logic import (FILTER_FIELDS, SEND_START_HOUR, SEND_END_HOUR,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
                    valid_cooldown_seconds, safe_saved_int)
 from storage import Store
@@ -257,7 +257,7 @@ class App:
             maximum = theoretical_daily_capacity(pace)
             self.pacing.set(f"Daily cap: {daily} (your setting, NOT LinkedIn's limit). "
                             f"At {pace:g}-second minimum spacing, pacing-only ceiling ≈ {min(daily, maximum)} per day "
-                            "during 9 AM–7 PM Eastern; no guarantee of delivery.")
+                            "during 8 AM–8 PM Eastern; no guarantee of delivery.")
         except (ValueError, tk.TclError):
             self.pacing.set("Set valid daily cap and cooldown values.")
 
@@ -481,7 +481,7 @@ class App:
         config = {"target": target, "daily_limit": daily, "cooldown": cooldown,
                   "searches": searches, "match_terms": matches, "filters": dict(self.filters),
                   "data_dir": str(APP_DIR), "browser_channel": STORE.setting("ui:browser_channel", "chromium"),
-                  "start_hour": 9, "end_hour": 19}
+                  "start_hour": SEND_START_HOUR, "end_hour": SEND_END_HOUR}
         self.worker = threading.Thread(target=self.work, args=(config,), daemon=True)
         self.worker.start()
 
