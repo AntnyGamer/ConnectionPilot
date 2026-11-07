@@ -234,11 +234,14 @@ class App:
                 raise ValueError("Invalid filters")
         except (ValueError, TypeError):
             saved = {}
-        result = {name: str(saved.get(name, "")) for name in (*FILTER_FIELDS, "exclude")}
+        result = {}
+        for name in (*FILTER_FIELDS, "exclude"):
+            value = saved.get(name, "")
+            result[name] = value if isinstance(value, str) else ""
         result["degree"] = saved.get("degree", "Any") if saved.get("degree") in ("Any", "2nd only", "2nd or 3rd") else "Any"
         try:
             result["min_score"] = max(0, min(100, int(saved.get("min_score", 25))))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             result["min_score"] = 25
         return result
 
