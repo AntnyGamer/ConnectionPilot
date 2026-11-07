@@ -35,7 +35,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('--smoke-test', workflow)
         self.assertLess(workflow.index('Smoke-test the actual packaged EXE offline'),
                         workflow.index('Upload Windows EXE'))
-        self.assertIn('"--collect-all", "tzdata"', builder)
+        self.assertIn('str(zone_file) + ";zoneinfo/America"', builder)
+        self.assertIn('"--exclude-module", "tzdata"', builder)
+        self.assertIn('zone_file.stat().st_size > 50_000', builder)
         self.assertIn('def smoke_test_exe(result_path):', app)
         self.assertIn('page.goto("about:blank", timeout=10000)', app)
 
