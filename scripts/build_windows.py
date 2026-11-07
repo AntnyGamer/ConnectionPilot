@@ -21,6 +21,8 @@ def build():
             # Keep the complete IANA rules, but only package tzdata's files:
             # PyInstaller compresses them inside its onefile archive.
             "--collect-data", "tzdata",
+            # ZoneInfo imports region packages dynamically by string name.
+            "--collect-submodules", "tzdata.zoneinfo",
             "--distpath", str(ROOT / "dist"),
             str(ROOT / "main.py")]
     subprocess.check_call(args, cwd=ROOT)
