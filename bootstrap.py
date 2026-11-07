@@ -3,6 +3,7 @@ from importlib.metadata import PackageNotFoundError, version
 import subprocess
 import sys
 from pathlib import Path
+from google_login import find_browser
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -44,8 +45,12 @@ def main():
     with sync_playwright() as playwright:
         chromium_present = (Path(playwright.chromium.executable_path).is_file())
     if not chromium_present:
-        print("Installing the Playwright Chromium browser...")
-        subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+        try:
+            channel, _ = find_browser()
+            print(f"Using installed {channel} instead of downloading Playwright Chromium.")
+        except FileNotFoundError:
+            print("Installing the Playwright Chromium browser...")
+            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
 
     # Never depend on the shell's current directory for program files.
     subprocess.check_call([sys.executable, str(BASE_DIR / "main.py")], cwd=BASE_DIR)
