@@ -1,4 +1,4 @@
-name: Build branded ConnectionPilot v1.0.7 (Windows)
+name: Build branded ConnectionPilot v1.1.0 (Windows)
 on:
   push:
     branches: [main]
@@ -66,7 +66,7 @@ jobs:
         run: |
           $exe = (Resolve-Path 'dist/ConnectionPilot.exe').Path
           $f = Get-Item $exe
-          if ($f.VersionInfo.ProductName -ne 'ConnectionPilot' -or $f.VersionInfo.FileVersion -ne '1.0.7.0') { throw 'EXE version metadata is incorrect' }
+          if ($f.VersionInfo.ProductName -ne 'ConnectionPilot' -or $f.VersionInfo.FileVersion -ne '1.1.0.0') { throw 'EXE version metadata is incorrect' }
           $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
           if ($null -eq $icon -or $icon.Width -lt 16) { throw 'EXE has no usable icon' }
           Write-Host "Verified icon $($icon.Width)x$($icon.Height), product $($f.VersionInfo.ProductName)"
@@ -90,13 +90,13 @@ jobs:
             Get-Content $result
           }
           if ($p.ExitCode -ne 0 -or -not (Test-Path $result) -or
-              -not (Select-String -Path $result -Pattern '^PASS v1.0.7:' -Quiet)) {
+              -not (Select-String -Path $result -Pattern '^PASS v1.1.0:' -Quiet)) {
             throw "Packaged EXE startup smoke test failed with exit code $($p.ExitCode)"
           }
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v7
         with:
-          name: ConnectionPilot-v1.0.7-Windows-EXE
+          name: ConnectionPilot-v1.1.0-Windows-EXE
           path: dist/ConnectionPilot.exe
           if-no-files-found: error
           retention-days: 30
@@ -115,7 +115,7 @@ jobs:
       - name: Download verified Windows executable
         uses: actions/download-artifact@v8
         with:
-          name: ConnectionPilot-v1.0.7-Windows-EXE
+          name: ConnectionPilot-v1.1.0-Windows-EXE
           path: release
       - name: Verify package and write checksum
         shell: bash
@@ -128,7 +128,7 @@ jobs:
           test -s release/connectionpilot.ico
           (cd release && sha256sum ConnectionPilot.exe > ConnectionPilot.exe.sha256)
           (cd release && sha256sum --check ConnectionPilot.exe.sha256)
-      - name: Publish version v1.0.7 release automatically
+      - name: Publish version v1.1.0 release automatically
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,15 +137,15 @@ jobs:
           set -euo pipefail
           # Versioned release tags match the compiled app/EXE metadata.
           # If a tag already exists, do not silently replace a different binary.
-          TAG="v1.0.7"
+          TAG="v1.1.0"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists. Keeping the immutable release unchanged; the new EXE remains available as a workflow artifact."
             exit 0
           fi
           gh release create "$TAG" \
-            "release/ConnectionPilot.exe#ConnectionPilot v1.0.7 for Windows" \
+            "release/ConnectionPilot.exe#ConnectionPilot v1.1.0 for Windows" \
             "release/ConnectionPilot.exe.sha256#SHA-256 checksum" \
             "release/connectionpilot.png#ConnectionPilot logo" \
             "release/connectionpilot.ico#Windows application icon" \
-            --target "$GITHUB_SHA" --title "ConnectionPilot v1.0.7" --latest \
-            --notes "ConnectionPilot v1.0.7 for Windows, built from commit $GITHUB_SHA. Extends the local sending window to 8 AM–8 PM Eastern, improves scheduling and pause/resume status, fixes duplicate keyword scoring and search phrases, and strengthens packaged EXE startup reliability. Verified by Windows offline tests, security analysis, and an executable smoke test. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
+            --target "$GITHUB_SHA" --title "ConnectionPilot v1.1.0" --latest \
+            --notes "ConnectionPilot v1.1.0 for Windows, built from commit $GITHUB_SHA. Extends the local sending window to 8 AM–8 PM Eastern, improves scheduling and pause/resume status, fixes duplicate keyword scoring and search phrases, and strengthens packaged EXE startup reliability. Verified by Windows offline tests, security analysis, and an executable smoke test. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
