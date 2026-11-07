@@ -5,9 +5,23 @@ Warning: LinkedIn prohibits unauthorized automation. Cooldowns cannot ensure saf
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import queue
 import sys
 import threading
+
+# In frozen Windows apps PyInstaller handles multiprocessing child arguments.
+# GUI bootloaders have no standard streams; provide valid null handles for
+# libraries that assume stdin/stdout/stderr are available.
+multiprocessing.freeze_support()
+if getattr(sys, "frozen", False) and sys.platform == "win32":
+    if sys.stdin is None:
+        sys.stdin = open(os.devnull, "r")
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
