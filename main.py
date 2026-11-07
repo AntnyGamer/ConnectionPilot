@@ -25,7 +25,7 @@ APP_DIR = Path.home() / "ConnectionPilot"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 restrict_posix_data(APP_DIR)
 STORE = Store(APP_DIR / "connectionpilot.sqlite3")
-APP_VERSION = "v1.0.5"
+APP_VERSION = "v1.0.6"
 
 
 def asset_path(name: str) -> Path:
