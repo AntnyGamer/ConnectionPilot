@@ -42,6 +42,7 @@ class Store:
     @contextmanager
     def _conn(self):
         c = sqlite3.connect(self.path, timeout=30)
+        c.execute("PRAGMA foreign_keys=ON")
         c.row_factory = sqlite3.Row
         try:
             yield c
@@ -211,7 +212,7 @@ class Store:
         """Discard old unattempted search leads, retaining all invitation history."""
         with self._conn() as db:
             cur = db.execute("""DELETE FROM profiles
-                WHERE status IN ('queued', 'filtered')
+                WHERE status IN ('queued', 'filtered', 'skipped')
                   AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""")
             return cur.rowcount
 
@@ -221,10 +222,11 @@ class Store:
             return {row[0]: row[1] for row in rows}
 
     def queued_count(self):
-        """Use the existing queued-only index instead of grouping all states."""
+        """Count sendable queued profiles, excluding any with a recorded attempt."""
         with self._conn() as db:
-            return db.execute(
-                "SELECT count(*) FROM profiles WHERE status='queued'").fetchone()[0]
+            return db.execute("""SELECT count(*) FROM profiles WHERE status='queued'
+                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)"""
+                ).fetchone()[0]
 
     def dashboard_stats(self):
         """Read dashboard counters together from one consistent SQLite snapshot."""
