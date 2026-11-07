@@ -122,4 +122,4 @@ jobs:
             "release/connectionpilot.png#ConnectionPilot logo" \
             "release/connectionpilot.ico#Windows application icon" \
             --target "$GITHUB_SHA" --title "ConnectionPilot v1.0.6" --latest \
-            --notes "ConnectionPilot v1.0.6 for Windows, built and verified by GitHub Actions from commit $GITHUB_SHA. Fixes search-result processing, restriction detection, data safety and SQLite performance. This executable is unsigned, may trigger SmartScreen, and is not endorsed or approved by LinkedIn."
+            --notes "ConnectionPilot v1.0.6 for Windows, built from commit $GITHUB_SHA. Extends the local sending window to 8 AM–8 PM Eastern, improves scheduling and pause/resume status, fixes duplicate keyword scoring and search phrases, and strengthens packaged EXE startup reliability. Verified by Windows offline tests, security analysis, and an executable smoke test. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
