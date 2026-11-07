@@ -2,14 +2,13 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from eastern_time import TZ
 from logic import (has_stop_signal, names_match, search_result_name, in_work_hours, local_now, match_score, normalize_profile,
                    passes_profile_filters, theoretical_daily_capacity, valid_cooldown_seconds,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int,
                    unique_phrases)
 from storage import Store
 
-TZ = ZoneInfo("America/New_York")
 
 class LogicTests(unittest.TestCase):
     def test_corrupt_saved_ui_integers_recover_without_losing_valid_values(self):
