@@ -6,7 +6,7 @@ from eastern_time import TZ
 from logic import (has_stop_signal, names_match, search_result_name, in_work_hours, local_now, match_score, normalize_profile,
                    passes_profile_filters, theoretical_daily_capacity, valid_cooldown_seconds,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours, safe_saved_int,
-                   unique_phrases)
+                   unique_phrases, clean_terms)
 from storage import Store
 
 
@@ -126,6 +126,16 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(match_score('politics government', ['politics', 'POLITICS', 'government']), 50)
         self.assertEqual(unique_phrases([' NJ policy ', '', 'nj POLICY', 'Rowan', 'rowan ']),
                          ['NJ policy', 'Rowan'])
+    def test_keyword_normalization_preserves_exact_results(self):
+        terms = [' Politics ', 'POLITICS', 'government', ' ', None, 42]
+        self.assertEqual(match_score('POLITICS and GOVERNMENT', terms), 50)
+        self.assertEqual(match_score('irrelevant profile', terms), 0)
+        self.assertEqual(clean_terms(' NJ , New Jersey, nj , , Policy '),
+                         ['nj', 'new jersey', 'policy'])
+        self.assertEqual(clean_terms([' NJ ', 'nj', None, 42, 'policy', 'POLICY']),
+                         ['nj', 'policy'])
+        self.assertEqual(clean_terms(None), [])
+
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
         self.assertTrue(has_stop_signal('Please complete CAPTCHA'))

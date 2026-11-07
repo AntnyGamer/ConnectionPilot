@@ -186,7 +186,15 @@ def clean_terms(value) -> list[str]:
     """Accept a list or comma-separated text. Case-insensitive, no empty filters."""
     if isinstance(value, str):
         value = value.split(",")
-    return list(dict.fromkeys(x.strip().casefold() for x in (value or []) if isinstance(x, str) and x.strip()))
+    seen = set()
+    result = []
+    for item in value or []:
+        if isinstance(item, str):
+            term = item.strip().casefold()
+            if term and term not in seen:
+                seen.add(term)
+                result.append(term)
+    return result
 
 
 def passes_profile_filters(profile_text: str, header_text: str, filters: dict | None,
