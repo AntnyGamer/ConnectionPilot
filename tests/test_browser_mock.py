@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from storage import Store
-from automation import ProtectionScreen, StopRun, check_protection, collect_results, send_one
+from automation import ProtectionScreen, check_protection, collect_results, send_one
 
 try:
     from playwright.sync_api import sync_playwright
