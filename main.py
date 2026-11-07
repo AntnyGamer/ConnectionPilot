@@ -577,6 +577,10 @@ def acquire_instance_lock(path):
 
 def smoke_test_exe(result_path):
     """Offline validation of the frozen Windows application and its dependencies."""
+    def stage(name):
+        result_path.write_text("STAGE " + name + "\n", encoding="utf-8")
+
+    stage("starting")
     try:
         if not getattr(sys, "frozen", False):
             raise RuntimeError("Smoke test must run from the packaged EXE")
@@ -585,10 +589,12 @@ def smoke_test_exe(result_path):
             if not asset_path(asset).is_file():
                 raise FileNotFoundError(f"Missing bundled asset: {asset}")
 
+        stage("assets validated")
         from logic import TZ, local_now
         if local_now().tzinfo != TZ:
             raise RuntimeError("Eastern timezone data unavailable in packaged EXE")
 
+        stage("timezone validated")
         from tempfile import TemporaryDirectory
         from automation import browser_launch_settings, choose_browser_channel
         from playwright.sync_api import sync_playwright
@@ -598,27 +604,39 @@ def smoke_test_exe(result_path):
             if db.setting("smoke") != "ok":
                 raise RuntimeError("SQLite persistence test failed")
 
+            stage("sqlite validated")
             # Exercise the actual packaged Node/Playwright driver, not only an import.
             # The Windows workflow points Playwright at an empty browser cache so
             # this also verifies fallback to an installed Chrome or Edge browser.
+            stage("starting playwright")
             with sync_playwright() as p:
+                stage("playwright started")
                 channel = choose_browser_channel("chromium", p.chromium.executable_path)
                 profile, options = browser_launch_settings(directory, channel)
+                stage("launching browser " + channel)
                 browser = p.chromium.launch_persistent_context(
-                    profile, headless=True, chromium_sandbox=True, **options)
+                    profile, headless=True, chromium_sandbox=True,
+                    timeout=20000, **options)
+                stage("browser launched")
                 try:
                     page = browser.pages[0] if browser.pages else browser.new_page()
-                    page.goto("about:blank")
+                    page.goto("about:blank", timeout=10000)
+                    stage("about blank loaded")
                 finally:
                     browser.close()
+                    stage("browser closed")
+            stage("playwright exited")
 
+        stage("creating tkinter root")
         root = tk.Tk()
         root.withdraw()
         try:
             App(root)
             root.update_idletasks()
+            stage("tkinter app initialized")
         finally:
             root.destroy()
+            stage("tkinter destroyed")
         result_path.write_text(f"PASS {APP_VERSION}: startup, GUI, assets, TZ, SQLite, Playwright, browser\n",
                                encoding="utf-8")
         return 0
