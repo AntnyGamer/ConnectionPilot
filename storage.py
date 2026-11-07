@@ -68,10 +68,10 @@ class Store:
             # The same person may appear in several searches. Keep the best
             # relevance score for unsent leads without changing their identity,
             # status, discovery order, or any recorded invitation attempt.
-            db.execute("""UPDATE profiles SET score=?, headline=?
+            db.execute("""UPDATE profiles SET score=?, headline=?, updated_at=?
                 WHERE url=? AND status='queued' AND score < ?
                   AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
-                       (score, headline[:500], url, score))
+                       (score, headline[:500], now, url, score))
             return False
 
     def processed_urls(self):
