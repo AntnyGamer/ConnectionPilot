@@ -18,7 +18,7 @@ class DependencyTests(unittest.TestCase):
                 expected[name.strip()] = wanted.strip()
         self.assertEqual(pins, expected)
         self.assertIn("playwright", pins)
-        self.assertNotIn("tzdata", pins)
+        self.assertEqual(pins["tzdata"], "2026.6")
 
     def test_launcher_avoids_chromium_download_when_chrome_or_edge_is_present(self):
         from unittest.mock import MagicMock
