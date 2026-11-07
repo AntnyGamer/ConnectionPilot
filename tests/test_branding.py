@@ -50,7 +50,7 @@ class BrandingTests(unittest.TestCase):
             db = Store(Path(directory) / "search.sqlite3")
             filters = {"degree": "Any", "min_score": 0}
             db.set_settings({
-                "ui:searches": "Policy\\ngovernment",
+                "ui:searches": "Policy\ngovernment",
                 "run:matching": json.dumps(
                     {"filters": filters, "terms": ["policy"]}, sort_keys=True),
                 "page:Policy": "7",
@@ -67,7 +67,7 @@ class BrandingTests(unittest.TestCase):
             app.cooldown = MagicMock()
             app.cooldown.get.return_value = 90
             app.search_box = MagicMock()
-            app.search_box.get.return_value = "policy\\n"
+            app.search_box.get.return_value = "policy\n"
             app.match_box = MagicMock()
             app.match_box.get.return_value = "policy"
             app.stop_event = threading.Event()
