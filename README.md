@@ -20,7 +20,7 @@ LinkedIn prohibits unauthorized automated invitations, regardless of delay or vo
 4. Enter your search phrases, matching terms and optional Advanced filters. Once signed in, one click on **Start campaign** begins the sending workflow; no further connection clicks are requested.
 5. Keep the program and the browser running during sending hours (8 AM–8 PM, New York time).
 
-The source ZIP is Python source, not a compiled `.exe`. The first source-based launch requires network access to install dependencies. The Chrome or Edge sign-in profile is kept separate from your regular browser profile. ConnectionPilot enables Chromium's browser sandbox explicitly when opening the automated browser rather than relying on Playwright's unsafe default launch setting.
+The source ZIP is Python source, not a compiled `.exe`. The first source-based launch requires network access to install dependencies. If Chrome or Edge is installed, the source launcher uses it instead of downloading an extra Playwright Chromium browser. The Chrome or Edge sign-in profile is kept separate from your regular browser profile. ConnectionPilot enables Chromium's browser sandbox explicitly when opening the automated browser rather than relying on Playwright's unsafe default launch setting.
 
 ## Settings
 
