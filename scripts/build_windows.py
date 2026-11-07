@@ -18,7 +18,9 @@ def build():
             "--add-data", str(ROOT / "assets/connectionpilot.png") + ";assets",
             "--add-data", str(ROOT / "assets/connectionpilot-header.png") + ";assets",
             "--collect-all", "playwright",
-            "--exclude-module", "tzdata",
+            # Keep the complete IANA rules, but only package tzdata's files:
+            # PyInstaller compresses them inside its onefile archive.
+            "--collect-data", "tzdata",
             "--distpath", str(ROOT / "dist"),
             str(ROOT / "main.py")]
     subprocess.check_call(args, cwd=ROOT)
