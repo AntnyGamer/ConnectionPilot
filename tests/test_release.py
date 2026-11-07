@@ -31,7 +31,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         app = (ROOT / 'main.py').read_text()
         self.assertIn('Smoke-test the actual packaged EXE offline', workflow)
         self.assertIn('PLAYWRIGHT_BROWSERS_PATH', workflow)
-        self.assertIn('ConnectionPilot Fresh User', workflow)
+        self.assertIn("The browser uses a separate TemporaryDirectory", workflow)
+        self.assertNotIn("$env:USERPROFILE =", workflow)
         self.assertIn('--smoke-test', workflow)
         self.assertLess(workflow.index('Smoke-test the actual packaged EXE offline'),
                         workflow.index('Upload Windows EXE'))
