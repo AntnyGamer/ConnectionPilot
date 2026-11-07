@@ -29,6 +29,7 @@ from tkinter import messagebox, ttk
 
 from automation import ProtectionScreen, StopRun, run_campaign
 from google_login import close_google_signin, open_google_signin
+from process_env import prepare_external_processes
 from logic import (FILTER_FIELDS, SEND_START_HOUR, SEND_END_HOUR,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
                    valid_cooldown_seconds, safe_saved_int, unique_phrases)
@@ -631,6 +632,7 @@ def smoke_test_exe(result_path):
             # The Windows workflow points Playwright at an empty browser cache so
             # this also verifies fallback to an installed Chrome or Edge browser.
             stage("starting playwright")
+            prepare_external_processes()
             with sync_playwright() as p:
                 stage("playwright started")
                 channel = choose_browser_channel("chromium", p.chromium.executable_path)
