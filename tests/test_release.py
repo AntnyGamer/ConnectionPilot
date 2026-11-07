@@ -37,7 +37,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                         workflow.index('Upload Windows EXE'))
         self.assertIn('"--collect-all", "tzdata"', builder)
         self.assertIn('def smoke_test_exe(result_path):', app)
-        self.assertIn('page.goto("about:blank")', app)
+        self.assertIn('page.goto("about:blank", timeout=10000)', app)
 
     def test_uses_existing_playwright_chromium(self):
         with TemporaryDirectory() as tmp:
