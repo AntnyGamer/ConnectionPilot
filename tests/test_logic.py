@@ -136,6 +136,19 @@ class LogicTests(unittest.TestCase):
                          ['nj', 'policy'])
         self.assertEqual(clean_terms(None), [])
 
+    def test_scoring_ceiling_and_empty_filters(self):
+        self.assertEqual(match_score(
+            'Politics policy government campaign legislation public affairs',
+            ['politics', 'policy', 'government', 'campaign', 'legislation', 'public affairs']), 100)
+        self.assertEqual(match_score('politics policy', ['politics', 'policy']), 50)
+        self.assertTrue(passes_profile_filters(
+            'Policy analyst in New Jersey', 'Policy Analyst',
+            {'locations': '', 'titles': [], 'schools': None, 'exclude': '',
+             'min_score': 0, 'degree': 'Any'}, [])[0])
+        self.assertFalse(passes_profile_filters(
+            'Policy analyst in New Jersey', 'Policy Analyst',
+            {'exclude': 'policy', 'min_score': 0}, [])[0])
+
     def test_stop_signals(self):
         self.assertTrue(has_stop_signal('You\u2019ve reached the invitation limit'))
         self.assertTrue(has_stop_signal('Please complete CAPTCHA'))

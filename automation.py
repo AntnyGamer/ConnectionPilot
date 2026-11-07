@@ -208,7 +208,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
-    minimum_score = (filters or {}).get("min_score", 1)
+    settings = filters or {}
+    # Settings do not change during discovery; avoid converting them for each card.
+    raw_score = settings.get("min_score", 1)
+    try:
+        minimum_score = max(0, int(raw_score))
+    except (ValueError, TypeError, OverflowError):
+        minimum_score = None
+    second_only = str(settings.get("degree", "Any")) == "2nd only"
     exclusions = None
     # Only navigation timeouts are recoverable here; unexpected browser
     # errors and LinkedIn protection screens must propagate normally.
@@ -346,15 +353,17 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # Search cards that explicitly say 3rd degree can be
                 # excluded when a 2nd-only filter is enabled. Unspecified
                 # degree stays eligible for verification on the full profile.
-                if (str((filters or {}).get("degree", "Any")) == "2nd only"
+                if (second_only
                         and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
                                       snippet, re.I)):
                     continue
                 score = match_score(snippet, match_terms)
-                if score < max(0, int(minimum_score)):
+                if minimum_score is None:
+                    raise ValueError("Invalid profile minimum score")
+                if score < minimum_score:
                     continue
                 if exclusions is None:
-                    exclusions = clean_terms((filters or {}).get("exclude"))
+                    exclusions = clean_terms(settings.get("exclude"))
                 if exclusions:
                     folded_snippet = snippet.casefold()
                     if any(term in folded_snippet for term in exclusions):

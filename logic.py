@@ -132,8 +132,14 @@ def match_score(snippet: str, terms: list[str] | None = None) -> int:
     unique = {term.strip().casefold()
               for term in (DEFAULT_MATCH_TERMS if terms is None else terms)
               if isinstance(term, str) and term.strip()}
-    hits = sum(term in words for term in unique)
-    return min(100, hits * 25)
+    # Four distinct matches already reach the 100-point ceiling.
+    hits = 0
+    for term in unique:
+        if term in words:
+            hits += 1
+            if hits == 4:
+                return 100
+    return hits * 25
 
 
 def has_stop_signal(text: str) -> bool:
@@ -209,14 +215,16 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
         return False, "Profile below the minimum interest match score."
     header = " ".join((header_text or "").casefold().split())
     for field in FILTER_FIELDS:
-        terms = clean_terms(f.get(field))
+        raw_terms = f.get(field)
+        if not raw_terms:
+            continue
+        terms = clean_terms(raw_terms)
         # Check location and role in the person's introduction, not references
         # to earlier employers, schools, or unrelated people later on the page.
         source = header if field in ("locations", "titles") else text
         if terms and not any(term in source for term in terms):
             return False, f"No visible match for {field} filter."
-    excluded = clean_terms(f.get("exclude"))
-    if any(term in text for term in excluded):
+    if f.get("exclude") and any(term in text for term in clean_terms(f["exclude"])):
         return False, "Profile contains an excluded keyword."
     degree = str(f.get("degree", "Any"))
     if degree != "Any":
