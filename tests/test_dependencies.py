@@ -20,6 +20,22 @@ class DependencyTests(unittest.TestCase):
         self.assertIn("playwright", pins)
         self.assertNotIn("tzdata", pins)
 
+    def test_launcher_avoids_chromium_download_when_chrome_or_edge_is_present(self):
+        from unittest.mock import MagicMock
+        browser = MagicMock()
+        browser.chromium.executable_path = "/path/to/missing-chromium"
+        playwright = MagicMock()
+        playwright.__enter__.return_value = browser
+        with patch.object(bootstrap, "pinned_dependencies", return_value={"playwright": "1.64.1"}), \
+             patch("bootstrap.version", return_value="1.64.1"), \
+             patch("bootstrap.Path.is_file", return_value=False), \
+             patch("bootstrap.find_browser", return_value=("chrome", "C:/Chrome/chrome.exe")), \
+             patch("playwright.sync_api.sync_playwright", return_value=playwright), \
+             patch("bootstrap.subprocess.check_call") as launch:
+            bootstrap.main()
+        launch.assert_called_once()
+        self.assertEqual(launch.call_args.args[0][-1], str(bootstrap.BASE_DIR / "main.py"))
+
     def test_invalid_pin_is_rejected(self):
         from unittest.mock import Mock
         from pathlib import Path
