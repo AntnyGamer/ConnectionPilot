@@ -111,10 +111,27 @@ def names_match(discovered: str, displayed: str) -> bool:
                for a, b in zip(expected[1:-1], actual[1:-1]))
 
 
+def unique_phrases(values) -> list[str]:
+    """Remove blank and repeated phrases without changing their original spelling."""
+    seen = set()
+    result = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        key = value.casefold()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
 def match_score(snippet: str, terms: list[str] | None = None) -> int:
-    """Local heuristic, not an AI judgment. Must match at least one interest term."""
+    """Count distinct matching interest terms, not repeated copies of one term."""
     words = (snippet or "").casefold()
-    hits = sum(1 for term in (DEFAULT_MATCH_TERMS if terms is None else terms) if term.strip() and term.strip().casefold() in words)
+    unique = {term.casefold() for term in unique_phrases(
+        DEFAULT_MATCH_TERMS if terms is None else terms)}
+    hits = sum(term in words for term in unique)
     return min(100, hits * 25)
 
 
