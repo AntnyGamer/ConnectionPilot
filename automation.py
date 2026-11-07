@@ -465,8 +465,8 @@ def _profile_intro(page, expected_name):
         if current.evaluate('el => el.tagName.toLowerCase() === "main"'):
             break
         actions = current.get_by_role("button", name=re.compile(
-            r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I)).or_(
-            current.get_by_role("link", name=re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect|Pending|Remove connection)$", re.I)))
+            r"^(?:Connect(?: with .+)?|Pending|Invitation pending|Withdraw invitation|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I)).or_(
+            current.get_by_role("link", name=re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect|Pending|Invitation pending|Withdraw invitation|Remove connection)$", re.I)))
         if any(action.is_visible() for action in actions.all()):
             # Never widen the panel into a sidebar or another person's card.
             # If there was a verified smaller panel, its More action is still
@@ -489,7 +489,8 @@ def _profile_intro(page, expected_name):
             if len(direct) == 1:
                 return current, None
             # Pending/connected is definitive; do not widen to another Connect.
-            if find_first_action(current, "Pending") or find_first_action(current, "Remove connection"):
+            if any(find_first_action(current, label) for label in
+                   ("Pending", "Invitation pending", "Withdraw invitation", "Remove connection")):
                 return current, None
             if fallback is None:
                 fallback = current
