@@ -50,6 +50,9 @@ jobs:
         run: |
           $exe = (Resolve-Path 'dist/ConnectionPilot.exe').Path
           $result = Join-Path $env:RUNNER_TEMP 'connectionpilot-exe-smoke.txt'
+          # Simulate a first-time user with no saved ConnectionPilot settings.
+          $env:USERPROFILE = Join-Path $env:RUNNER_TEMP 'ConnectionPilot Fresh User'
+          New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'empty-playwright-browsers'
           New-Item -ItemType Directory -Path $env:PLAYWRIGHT_BROWSERS_PATH -Force | Out-Null
           $p = Start-Process -FilePath $exe -ArgumentList @('--smoke-test', "`"$result`"") -PassThru
