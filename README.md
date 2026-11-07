@@ -175,6 +175,7 @@ GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
 that GitHub setting.
 The displayed version is **v1.0.5**.
+When that version's release tag already exists, a later successful main-branch build leaves the immutable published release untouched; the fresh compiled EXE is still available as a GitHub Actions build artifact. Publishing a new release requires intentionally updating the version and tag.
 
 The repo also contains a **Windows-only** GitHub Actions build at
 [Actions](https://github.com/AntnyGamer/ConnectionPilot/actions/workflows/windows-build.yml)
