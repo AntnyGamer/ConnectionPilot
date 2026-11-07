@@ -161,7 +161,7 @@ def check_protection(page):
             raise ProtectionScreen("LinkedIn displayed a limit, restriction or verification warning")
 
 
-def wait_or_stop(seconds, stop_event, pause_event, status, reason=""):
+def wait_or_stop(seconds, stop_event, pause_event, status, reason="", preserve_pause_delay=True):
     """Responsive wait that can pause without sending invitations."""
     until = time.monotonic() + seconds
     last_bucket = None
@@ -171,8 +171,11 @@ def wait_or_stop(seconds, stop_event, pause_event, status, reason=""):
             paused_at = time.monotonic()
             while pause_event.is_set() and not stop_event.is_set():
                 stop_event.wait(.5)
-            # Pausing does not consume the remaining cooldown.
-            until += time.monotonic() - paused_at
+            # Cooldowns may be preserved across a pause, but fixed clock times
+            # (sending hours and midnight quota reset) must not move later.
+            if preserve_pause_delay:
+                until += time.monotonic() - paused_at
+            last_bucket = None  # Replace the stale "Paused" status on resume.
             continue
         remaining = until - time.monotonic()
         if remaining <= 0:
@@ -804,12 +807,14 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 if not in_work_hours(now, config["start_hour"], config["end_hour"]):
                     wait_or_stop(seconds_until_work_hours(now, config["start_hour"], config["end_hour"]),
                                  stop_event, pause_event, notify,
-                                 reason=f"Outside sending hours ({config['start_hour']}:00–{config['end_hour']}:00 Eastern).")
+                                 reason=f"Outside sending hours ({config['start_hour']}:00–{config['end_hour']}:00 Eastern).",
+                                 preserve_pause_delay=False)
                     continue
                 today = store.attempts_today()
                 if today >= config["daily_limit"]:
                     notify(f"Daily cap of {config['daily_limit']} reached. Waiting for tomorrow.")
-                    wait_or_stop(seconds_until_tomorrow(now) + 60, stop_event, pause_event, notify)
+                    wait_or_stop(seconds_until_tomorrow(now) + 60, stop_event, pause_event, notify,
+                                 preserve_pause_delay=False)
                     continue
                 remaining = seconds_until_next_send(now, store.last_attempt_at(), config["cooldown"])
                 if remaining:
