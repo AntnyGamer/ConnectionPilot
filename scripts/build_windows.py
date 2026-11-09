@@ -17,6 +17,7 @@ def build():
             "--add-data", str(ROOT / "assets/connectionpilot.ico") + ";assets",
             "--add-data", str(ROOT / "assets/connectionpilot.png") + ";assets",
             "--add-data", str(ROOT / "assets/connectionpilot-header.png") + ";assets",
+            "--add-data", str(ROOT / "THIRD-PARTY-NOTICES.txt") + ";.",
             "--collect-all", "playwright",
             # Keep the complete IANA rules, but only package tzdata's files:
             # PyInstaller compresses them inside its onefile archive.
