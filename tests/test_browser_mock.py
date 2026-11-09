@@ -572,6 +572,37 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'sent', reason)
         self.assertNotIn(900, target.waits)
 
+    def test_delayed_pending_is_confirmed_without_another_click(self):
+        # The live site may take longer than the previous 0.9s observation
+        # window to replace Connect with Pending.
+        doc = html("""<button id='c' onclick="this.dataset.clicks =
+          String(Number(this.dataset.clicks || 0) + 1);
+          setTimeout(() => { this.textContent='Pending' }, 3500)">Connect</button>""")
+        class LocalPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        result, reason = send_one(LocalPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
+                                  self.db, lambda _: None)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#c').get_attribute('data-clicks'), '1')
+
+    def test_withdraw_invitation_after_click_confirms_pending(self):
+        doc = html("""<button id='c'
+          onclick="this.textContent='Withdraw invitation'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+
+    def test_existing_withdraw_invitation_is_never_clicked(self):
+        doc = html("""<button id='c'
+          onclick="this.dataset.clicked='1'">Withdraw invitation</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIsNone(self.page.locator('#c').get_attribute('data-clicked'))
+        self.assertEqual(self.db.total_attempts(), 0)
+
     def test_generic_send_in_invitation_dialog_is_clicked_automatically(self):
         doc = html('''''''''<button id="c" onclick="document.querySelector('#d').hidden=false">Connect</button>''''''''' , '''''''''<div role="dialog" id="d" hidden><p>Send your invitation to connect</p>
           <button id="final" onclick="document.querySelector('#c').textContent='Pending';document.querySelector('#d').hidden=true">Send</button></div>''''''''' )
