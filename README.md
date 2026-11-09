@@ -10,7 +10,7 @@ LinkedIn prohibits unauthorized automated invitations, regardless of delay or vo
 
 ## Install on Windows
 
-**Recommended:** Download the latest branded `ConnectionPilot.exe` from [GitHub Releases](https://github.com/AntnyGamer/ConnectionPilot/releases/latest). Python is not required for the standalone EXE. The program is unsigned, and Windows may display a SmartScreen warning.
+**Recommended:** Download the latest branded `ConnectionPilot.exe` from [GitHub Releases](https://github.com/AntnyGamer/ConnectionPilot/releases/latest). Python is not required for the standalone EXE. The program is unsigned, and Windows may display a SmartScreen warning. Third-party licenses and attributions for the packaged Windows EXE are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt); CI includes that file with the downloadable executable.
 
 **Run the source instead:**
 

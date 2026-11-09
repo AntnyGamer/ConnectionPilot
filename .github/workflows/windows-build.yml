@@ -97,7 +97,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ConnectionPilot-v1.1.0-Windows-EXE
-          path: dist/ConnectionPilot.exe
+          path: |
+            dist/ConnectionPilot.exe
+            dist/THIRD-PARTY-NOTICES.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -124,6 +126,8 @@ jobs:
           test -s release/ConnectionPilot.exe
           cp assets/connectionpilot.png release/connectionpilot.png
           cp assets/connectionpilot.ico release/connectionpilot.ico
+          cp THIRD-PARTY-NOTICES.txt release/THIRD-PARTY-NOTICES.txt
+          test -s release/THIRD-PARTY-NOTICES.txt
           test -s release/connectionpilot.png
           test -s release/connectionpilot.ico
           (cd release && sha256sum ConnectionPilot.exe > ConnectionPilot.exe.sha256)
@@ -153,5 +157,6 @@ jobs:
             "release/ConnectionPilot.exe.sha256#SHA-256 checksum" \
             "release/connectionpilot.png#ConnectionPilot logo" \
             "release/connectionpilot.ico#Windows application icon" \
+            "release/THIRD-PARTY-NOTICES.txt#Third-party licenses and attribution" \
             --target "$GITHUB_SHA" --title "ConnectionPilot v1.1.0" --latest \
             --notes "ConnectionPilot v1.1.0 for Windows, built from commit $GITHUB_SHA. Reduces repeated keyword scoring and name normalization during profile discovery, simplifies advanced-filter processing, and fixes stale search-page cursors when searches change. Validated by offline Windows tests and a packaged executable startup smoke test. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
