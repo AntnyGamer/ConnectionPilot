@@ -465,11 +465,8 @@ def _profile_intro(page, expected_name):
         if current.evaluate('el => el.tagName.toLowerCase() === "main"'):
             break
         actions = current.get_by_role("button", name=re.compile(
-            r"^(?:Connect(?: with .+)?|Invite .* to connect|Pending|Invitation pending|"
-            r"Withdraw invitation|Message|More(?: actions)?|Remove connection)$", re.I)).or_(
-            current.get_by_role("link", name=re.compile(
-                r"^(?:Connect(?: with .+)?|Invite .* to connect|Pending|Invitation pending|"
-                r"Withdraw invitation|Remove connection)$", re.I)))
+            r"^(?:Connect(?: with .+)?|Pending|Message|More(?: actions)?|Remove connection|Invite .* to connect)$", re.I)).or_(
+            current.get_by_role("link", name=re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect|Pending|Remove connection)$", re.I)))
         if any(action.is_visible() for action in actions.all()):
             # Never widen the panel into a sidebar or another person's card.
             # If there was a verified smaller panel, its More action is still
@@ -492,8 +489,7 @@ def _profile_intro(page, expected_name):
             if len(direct) == 1:
                 return current, None
             # Pending/connected is definitive; do not widen to another Connect.
-            if any(find_first_action(current, label) for label in
-                   ("Pending", "Invitation pending", "Withdraw invitation", "Remove connection")):
+            if find_first_action(current, "Pending") or find_first_action(current, "Remove connection"):
                 return current, None
             if fallback is None:
                 fallback = current
@@ -512,7 +508,7 @@ def find_first_action(intro, name):
     pattern = (re.compile(r"^(?:Connect(?: with .+)?|Invite .* to connect)$", re.I) if name == "Connect"
                else re.compile(r"^" + re.escape(name) + (r"(?: actions)?$" if name == "More" else r"$"), re.I))
     buttons = intro.get_by_role("button", name=pattern)
-    if name in ("Connect", "Pending", "Invitation pending", "Withdraw invitation", "Remove connection"):
+    if name in ("Connect", "Pending", "Remove connection"):
         buttons = buttons.or_(intro.get_by_role("link", name=pattern))
     matches = [button for button in buttons.all() if button.is_visible()]
     return matches[0] if len(matches) == 1 else None
@@ -589,7 +585,7 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     first_degree = bool(re.search(r"\b1st(?:[-\s]*degree(?:[-\s]*connection)?)?\b", intro_text, re.I))
     if first_degree or any(badge.is_visible() for badge in degree_badges.all()[:30]):
         return "skipped", "Already a first-degree connection; no invitation needed."
-    for label in ("Pending", "Invitation pending", "Withdraw invitation", "Remove connection"):
+    for label in ("Pending", "Remove connection"):
         if find_first_action(header, label):
             return "skipped", f"Already connected or invitation pending ({label})."
     if filters is not None:
@@ -645,17 +641,6 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     sent_pattern = re.compile(r"Invitation sent|Your invitation has been sent|Invitation pending", re.I)
     existing_notice = page.get_by_text(sent_pattern)
     had_notice = any(node.is_visible() for node in existing_notice.all())
-
-    def confirmation_state():
-        # Confirm only on the original member's action panel or a *new*
-        # invitation notice. A pre-existing notice proves nothing.
-        for label in ("Pending", "Invitation pending", "Withdraw invitation"):
-            if find_first_action(header, label):
-                return f"{label} shown on verified profile"
-        if not had_notice and any(node.is_visible() for node in page.get_by_text(sent_pattern).all()):
-            return "new invitation confirmation notice"
-        return None
-
     # A late navigation or cross-site redirect must never initiate an invitation.
     if not is_trusted_linkedin_page(page.url) or normalize_profile(page.url) != url:
         return "skipped", "Profile navigated away before the Connect click; nothing clicked."
@@ -681,20 +666,16 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
         connect.click(timeout=7000)
         page.wait_for_timeout(700)
         check_protection(page)
-        # A modal or Pending state can appear several seconds after the
-        # first click. Wait only while neither is visible; never click again.
+        # Wait briefly for asynchronously rendered confirmation controls. A
+        # direct Connect click can also send immediately without a dialog.
         visible_dialogs = []
-        for attempt in range(21):
+        for _ in range(5):
             dialogs = page.get_by_role("dialog")
             visible_dialogs = [d for d in dialogs.all() if d.is_visible()]
-            if visible_dialogs or confirmation_state():
+            if visible_dialogs or find_first_action(header, "Pending"):
                 break
-            if attempt < 20:
-                page.wait_for_timeout(250)
+            page.wait_for_timeout(300)
         check_protection(page)
-        direct_confirmation = confirmation_state()
-        if direct_confirmation:
-            return "sent", f"Invitation confirmed by LinkedIn UI: {direct_confirmation}."
         if len(visible_dialogs) > 1:
             return "uncertain", "Multiple visible dialogs; set aside automatically without a second click."
         if visible_dialogs:
@@ -722,18 +703,23 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             if pre_confirm_check is not None and not pre_confirm_check():
                 return "uncertain", "Sending window or daily cap changed before final confirmation; no second click."
             action.click(timeout=7000)
-        # UI status/toasts can arrive well after the confirmation click.
-        # Observe, but never issue a second invitation based on a timeout.
-        for attempt in range(21):
-            confirmation = confirmation_state()
-            if confirmation:
-                check_protection(page)
-                return "sent", f"Invitation confirmed by LinkedIn UI: {confirmation}."
-            if attempt < 20:
-                page.wait_for_timeout(250)
+        # A visible Pending state or a new confirmation needs no fixed wait.
+        # Keep the previous 900ms maximum for asynchronous UI updates.
+        pending = None
+        new_notice = False
+        sent_notice = page.get_by_text(sent_pattern)
+        for attempt in range(4):
+            pending = find_first_action(header, "Pending")
+            new_notice = not had_notice and any(
+                node.is_visible() for node in sent_notice.all())
+            if pending or new_notice:
+                break
+            if attempt < 3:
+                page.wait_for_timeout(300)
         check_protection(page)
-        return "uncertain", ("Clicked invitation action but could not verify a Pending state or new "
-                             "invitation confirmation. Set aside automatically; no retry.")
+        if pending or new_notice:
+            return "sent", "Invitation confirmed by LinkedIn UI."
+        return "uncertain", "Clicked invitation action but could not verify sending. Set aside automatically; no retry."
     except ProtectionScreen:
         raise
     except Exception as exc:
