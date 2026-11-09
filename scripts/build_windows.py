@@ -1,5 +1,6 @@
 """Build the ConnectionPilot v1.1.0 Windows executable. Run on Windows, never cross-compile from Linux."""
 from __future__ import annotations
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,8 @@ def build():
     output = ROOT / "dist/ConnectionPilot.exe"
     if not output.is_file() or output.stat().st_size < 100_000:
         raise RuntimeError("Windows executable wasn't produced")
+    # Ship the same notices as an accessible file alongside the one-file EXE.
+    shutil.copyfile(ROOT / "THIRD-PARTY-NOTICES.txt", output.parent / "THIRD-PARTY-NOTICES.txt")
     print(f"Built {output}: {output.stat().st_size:,} bytes")
 
 
