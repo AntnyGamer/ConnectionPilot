@@ -99,7 +99,7 @@ jobs:
           name: ConnectionPilot-v1.1.0-Windows-EXE
           path: |
             dist/ConnectionPilot.exe
-            THIRD-PARTY-NOTICES.txt
+            dist/THIRD-PARTY-NOTICES.txt
           if-no-files-found: error
           retention-days: 30
 
