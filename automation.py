@@ -404,7 +404,6 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # while we were reading the initial snapshot.
         result_list_changed = anchors.count() != anchor_count
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
-            check_protection(page)
             notify(f"Results for '{search}' navigated away during inspection; "
                    f"retaining page {page_no}.")
         elif result_list_changed:
