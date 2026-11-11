@@ -696,6 +696,12 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     # Loading a slow profile could otherwise allow sending beyond the cap.
     if pre_click_check is not None and not pre_click_check():
         return "deferred", "Sending conditions changed during preflight; candidate remains queued."
+    # The pacing callback can block on SQLite long enough for Pause/Stop to
+    # arrive. Recheck before reserving any invitation attempt.
+    if stop_event is not None and stop_event.is_set():
+        raise StopRun()
+    if pause_event is not None and pause_event.is_set():
+        return "paused", "Paused before sending; candidate remains queued."
     # An already-disabled or vanished control cannot initiate a request.
     # Check before writing an attempt so a harmless no-op does not consume
     # the user's goal, cap or cooldown.
@@ -744,6 +750,11 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             # pre-click cooldown check here or try this invitation again.
             if pre_confirm_check is not None and not pre_confirm_check():
                 return "uncertain", "Sending window or daily cap changed before final confirmation; no second click."
+            # The confirmation callback can also block on SQLite. Never
+            # send a second/final click after Stop or Pause arrived there.
+            if ((stop_event is not None and stop_event.is_set()) or
+                    (pause_event is not None and pause_event.is_set())):
+                return "uncertain", "Confirmation interrupted after eligibility check; no final click."
             action.click(timeout=7000)
         # LinkedIn can re-render the introduction after the final click.
         # Refresh the verified profile's action panel instead of relying on
