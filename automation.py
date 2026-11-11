@@ -733,8 +733,8 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
                 page.wait_for_timeout(300)
         check_protection(page)
         return "uncertain", (
-            "No visible LinkedIn confirmation after six seconds. The invitation "
-            "may still have been sent; set aside without retrying."
+            "Clicked invitation action but could not verify sending after six seconds. "
+            "The invitation may still have been sent; set aside without retrying."
         )
     except ProtectionScreen:
         raise
