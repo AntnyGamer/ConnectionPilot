@@ -278,6 +278,22 @@ class Store:
                 (start, end)).fetchone()
             return counts, total, confirmed, possible
 
+    def pacing_state(self):
+        """Read today's attempt count and newest click together for pacing.
+
+        This replaces two separate SQLite connections on the normal sending
+        path, with both values from the same committed read snapshot.
+        """
+        start, end = self._today_bounds()
+        with self._conn() as db:
+            db.execute("BEGIN")
+            count = db.execute("""SELECT count(*) FROM attempts
+                WHERE initiated_at >= ? AND initiated_at < ?""",
+                (start, end)).fetchone()[0]
+            row = db.execute("""SELECT initiated_at FROM attempts
+                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchone()
+            return count, row[0] if row else None
+
     def attempts_today(self):
         """Conservatively count unverified clicks as possible invitations."""
         start, end = self._today_bounds()
