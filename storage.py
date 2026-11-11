@@ -213,6 +213,18 @@ class Store:
         with self._conn() as db:
             return db.execute("SELECT count(*) FROM attempts").fetchone()[0]
 
+    def attempt_outcomes(self):
+        """Return (total, confirmed, not_confirmed) from the immutable click ledger.
+
+        A click subsequently marked skipped remains a possible invitation,
+        rather than disappearing from the goal-completion breakdown.
+        """
+        with self._conn() as db:
+            total, confirmed = db.execute("""SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN result='sent' THEN 1 ELSE 0 END), 0)
+                FROM attempts""").fetchone()
+        return total, confirmed, total - confirmed
+
     def discard_stale_leads(self):
         """Discard old unattempted search leads, retaining all invitation history."""
         with self._conn() as db:
