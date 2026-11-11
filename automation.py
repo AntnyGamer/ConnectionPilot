@@ -743,7 +743,15 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
         sent_notice = page.get_by_text(sent_pattern)
         current_header = header
         for attempt in range(21):
-            if attempt and attempt % 3 == 0 and normalize_profile(page.url) == url:
+            # A notice on a different member's page is not proof that this
+            # invitation succeeded. Never retry the potentially sent action.
+            if normalize_profile(page.url) != url:
+                check_protection(page)
+                return "uncertain", (
+                    "Page changed after invitation click; confirmation could not "
+                    "be attributed to the intended profile. No retry attempted."
+                )
+            if attempt and attempt % 3 == 0:
                 try:
                     refreshed_header, _ = _profile_intro(page, profile["name"])
                     if refreshed_header is not None:
@@ -828,7 +836,9 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             raise
         try:
             page = browser.pages[0] if browser.pages else browser.new_page()
-            page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=45000)
+            feed_response = page.goto("https://www.linkedin.com/feed/",
+                                      wait_until="domcontentloaded", timeout=45000)
+            reject_denied_page(feed_response)
             if channel in SUPPORTED:
                 # Google sign-in must happen in the NORMAL browser, not the controlled one.
                 # Only the already-established LinkedIn session is reused here.
