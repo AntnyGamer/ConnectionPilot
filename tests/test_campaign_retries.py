@@ -66,6 +66,23 @@ class WorkerRecoveryTests(unittest.TestCase):
                 self.assertFalse(self.store.has_attempt(url))
         self.page.goto.return_value = None
 
+    def test_initial_feed_access_denial_stops_before_discovery(self):
+        # Initial authentication/feed navigation needs the same fail-closed
+        # HTTP restrictions as search and member-profile navigation.
+        for code in (403, 429, 999):
+            with self.subTest(http_status=code):
+                self.page.goto.reset_mock(return_value=True)
+                self.page.goto.return_value = SimpleNamespace(status=code)
+                with patch('automation.collect_results') as discover, \
+                     patch('automation.send_one') as send:
+                    self.run_fake(ProtectionScreen)
+                self.page.goto.assert_called_once()
+                discover.assert_not_called()
+                send.assert_not_called()
+                self.browser.close.assert_called()
+                self.assertEqual(self.store.total_attempts(), 0)
+        self.page.goto.return_value = None
+
     def test_worker_does_not_query_status_counts_until_goal_reached(self):
         with patch.object(self.store, "counts",
                           side_effect=AssertionError("Unexpected idle status scan")), \
