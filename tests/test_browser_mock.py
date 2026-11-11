@@ -1142,6 +1142,43 @@ class BrowserMockTests(unittest.TestCase):
         result, _ = self.run_mock(doc)
         self.assertEqual(result, 'uncertain')
 
+    def test_confirmation_notice_on_other_profile_never_marks_original_sent(self):
+        # A navigation after the first click must never let a toast on an
+        # unrelated LinkedIn member count as confirmation for the target.
+        doc = html("""<button id="c" onclick="
+            document.body.dataset.switched = '1';
+            document.body.insertAdjacentHTML('beforeend',
+              '<p id=notice>Invitation sent</p>')">Connect</button>""")
+
+        class RedirectPage:
+            def __init__(self, page):
+                self.page = page
+
+            @property
+            def url(self):
+                if self.page.locator('body').get_attribute('data-switched') == '1':
+                    return 'https://www.linkedin.com/in/someone-else/'
+                return MOCK_URL
+
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+
+            def wait_for_timeout(self, ms):
+                self.page.wait_for_timeout(min(ms, 10))
+
+            def __getattr__(self, key):
+                return getattr(self.page, key)
+
+        self.db.add(MOCK_URL, 'Test Example', 'public policy', 25)
+        result, reason = send_one(
+            RedirectPage(self.page),
+            {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None)
+        self.assertEqual(result, 'uncertain', reason)
+        self.assertIn('Page changed', reason)
+        self.assertTrue(self.db.has_attempt(MOCK_URL))
+        self.assertIsNone(self.db.next_profile())
+
     def test_old_confirmation_text_is_not_new_send_evidence(self):
         doc = html('<button>Connect</button><p>Invitation sent</p>')
         result, reason = self.run_mock(doc)
