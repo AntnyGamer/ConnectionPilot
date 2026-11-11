@@ -136,6 +136,28 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.assertEqual(collect.call_count, 3)
             self.assertTrue(any('retry' in s.lower() for s in self.status))
 
+    def test_exhausted_discovery_pages_stop_without_empty_retries(self):
+        self.store.set_setting('page:political science', '16')
+        with patch('automation.collect_results',
+                   side_effect=AssertionError('Nothing left to collect')) as collect:
+            self.assertEqual(self.run_fake(), 0)
+            collect.assert_not_called()
+        self.assertEqual(self.store.total_attempts(), 0)
+
+    def test_one_remaining_discovery_page_still_runs(self):
+        self.config['searches'].append('government')
+        self.store.set_setting('page:political science', '16')
+        self.store.set_setting('page:government', '15')
+        with patch('automation.collect_results', side_effect=StopRun('inspection')) as collect:
+            self.run_fake()
+            collect.assert_called_once()
+
+    def test_invalid_discovery_cursor_still_tries_safe_recovery(self):
+        self.store.set_setting('page:political science', 'bad saved cursor')
+        with patch('automation.collect_results', side_effect=StopRun('inspection')) as collect:
+            self.run_fake()
+            collect.assert_called_once()
+
     def test_navigation_failure_is_not_revisited_automatically(self):
         url = 'https://www.linkedin.com/in/retry-person/'
         self.store.add(url, 'Retry Person', 'political science', 25)
