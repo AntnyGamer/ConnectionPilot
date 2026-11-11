@@ -514,6 +514,24 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.dashboard_stats(),
                          ({"queued": 1, "sent": 1}, 1, 1, 1))
 
+    def test_dashboard_queue_excludes_stale_queued_attempts(self):
+        """Display the same sendable queue that next_profile uses."""
+        base = 'https://www.linkedin.com/in/'
+        fresh = base + 'unattempted/'
+        stale = base + 'attempted-but-queued/'
+        filtered = base + 'filtered/'
+        for url in (fresh, stale, filtered):
+            self.db.add(url, 'Candidate', 'government', 25)
+        self.db.mark(stale, 'uncertain', 'Potential invitation click')
+        self.db.mark(stale, 'queued', 'Legacy status restored')
+        self.db.mark(filtered, 'filtered', 'No match')
+        counts, total, confirmed, possible = self.db.dashboard_stats()
+        self.assertEqual(counts, {'queued': 1, 'filtered': 1})
+        self.assertEqual(counts['queued'], self.db.queued_count())
+        self.assertEqual((total, confirmed, possible), (1, 0, 1))
+        self.assertEqual(self.db.next_profile()['url'], fresh)
+        self.assertTrue(self.db.has_attempt(stale))
+
     def test_pacing_state_matches_separate_reads_with_one_connection(self):
         from unittest.mock import patch
         url = 'https://www.linkedin.com/in/pacing-state/'
