@@ -1,4 +1,4 @@
-name: Build branded ConnectionPilot v1.1.0 (Windows)
+name: Build branded ConnectionPilot v1.1.1 (Windows)
 on:
   push:
     branches: [main]
@@ -66,7 +66,7 @@ jobs:
         run: |
           $exe = (Resolve-Path 'dist/ConnectionPilot.exe').Path
           $f = Get-Item $exe
-          if ($f.VersionInfo.ProductName -ne 'ConnectionPilot' -or $f.VersionInfo.FileVersion -ne '1.1.0.0') { throw 'EXE version metadata is incorrect' }
+          if ($f.VersionInfo.ProductName -ne 'ConnectionPilot' -or $f.VersionInfo.FileVersion -ne '1.1.1.0') { throw 'EXE version metadata is incorrect' }
           $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
           if ($null -eq $icon -or $icon.Width -lt 16) { throw 'EXE has no usable icon' }
           Write-Host "Verified icon $($icon.Width)x$($icon.Height), product $($f.VersionInfo.ProductName)"
@@ -90,13 +90,13 @@ jobs:
             Get-Content $result
           }
           if ($p.ExitCode -ne 0 -or -not (Test-Path $result) -or
-              -not (Select-String -Path $result -Pattern '^PASS v1.1.0:' -Quiet)) {
+              -not (Select-String -Path $result -Pattern '^PASS v1.1.1:' -Quiet)) {
             throw "Packaged EXE startup smoke test failed with exit code $($p.ExitCode)"
           }
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v7
         with:
-          name: ConnectionPilot-v1.1.0-Windows-EXE
+          name: ConnectionPilot-v1.1.1-Windows-EXE
           path: |
             dist/ConnectionPilot.exe
             dist/THIRD-PARTY-NOTICES.txt
@@ -117,7 +117,7 @@ jobs:
       - name: Download verified Windows executable
         uses: actions/download-artifact@v8
         with:
-          name: ConnectionPilot-v1.1.0-Windows-EXE
+          name: ConnectionPilot-v1.1.1-Windows-EXE
           path: release
       - name: Verify package and write checksum
         shell: bash
@@ -132,7 +132,7 @@ jobs:
           test -s release/connectionpilot.ico
           (cd release && sha256sum ConnectionPilot.exe > ConnectionPilot.exe.sha256)
           (cd release && sha256sum --check ConnectionPilot.exe.sha256)
-      - name: Publish version v1.1.0 release automatically
+      - name: Publish version v1.1.1 release automatically
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -141,7 +141,7 @@ jobs:
           set -euo pipefail
           # Versioned release tags match the compiled app/EXE metadata.
           # If a tag already exists, do not silently replace a different binary.
-          TAG="v1.1.0"
+          TAG="v1.1.1"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists. Keeping the immutable release unchanged; the new EXE remains available as a workflow artifact."
             exit 0
@@ -153,10 +153,28 @@ jobs:
             exit 1
           fi
           gh release create "$TAG" \
-            "release/ConnectionPilot.exe#ConnectionPilot v1.1.0 for Windows" \
+            "release/ConnectionPilot.exe#ConnectionPilot v1.1.1 for Windows" \
             "release/ConnectionPilot.exe.sha256#SHA-256 checksum" \
             "release/connectionpilot.png#ConnectionPilot logo" \
             "release/connectionpilot.ico#Windows application icon" \
             "release/THIRD-PARTY-NOTICES.txt#Third-party licenses and attribution" \
-            --target "$GITHUB_SHA" --title "ConnectionPilot v1.1.0" --latest \
-            --notes "ConnectionPilot v1.1.0 for Windows, built from commit $GITHUB_SHA. Reduces repeated keyword scoring and name normalization during profile discovery, simplifies advanced-filter processing, and fixes stale search-page cursors when searches change. Validated by offline Windows tests and a packaged executable startup smoke test. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
+            --target "$GITHUB_SHA" --title "ConnectionPilot v1.1.1" --latest \
+            --notes "ConnectionPilot v1.1.1 for Windows, built from commit $GITHUB_SHA. Improves search-result persistence and recovery, validates invitation confirmations and account restrictions, prevents clicks after Pause/Stop, and reduces redundant SQLite work. Validated by offline regression tests, CodeQL, and packaged Windows EXE smoke testing. Keeps the attempt ledger and duplicate-prevention protections intact. Unsigned; Windows SmartScreen may warn. Not endorsed or approved by LinkedIn."
+
+      - name: Verify public release and all required uploaded assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="v1.1.1"
+          release_json="$(gh release view "$TAG" --json tagName,isDraft,isPrerelease,assets,url)"
+          jq -e --arg tag "$TAG" '.tagName == $tag and (.isDraft | not) and (.isPrerelease | not)' <<<"$release_json" >/dev/null
+          for required in ConnectionPilot.exe ConnectionPilot.exe.sha256 connectionpilot.png connectionpilot.ico THIRD-PARTY-NOTICES.txt; do
+            jq -e --arg filename "$required" '.assets | any(.[]; .name == $filename and .size > 0)' <<<"$release_json" >/dev/null || {
+              echo "::error::Published GitHub release is missing $required"
+              exit 1
+            }
+          done
+          echo "Verified public $TAG release and all five nonempty downloadable assets."

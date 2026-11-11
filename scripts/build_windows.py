@@ -1,4 +1,4 @@
-"""Build the ConnectionPilot v1.1.0 Windows executable. Run on Windows, never cross-compile from Linux."""
+"""Build the ConnectionPilot v1.1.1 Windows executable. Run on Windows, never cross-compile from Linux."""
 from __future__ import annotations
 import shutil
 import subprocess

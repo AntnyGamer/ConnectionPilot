@@ -220,13 +220,13 @@ class BrandingTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/windows-build.yml").read_text()
         win_version = (root / "assets/connectionpilot_version.txt").read_text()
-        self.assertEqual(main.APP_VERSION, "v1.1.0")
+        self.assertEqual(main.APP_VERSION, "v1.1.1")
         self.assertIn("filevers=(1, 1, 0, 0)", win_version)
         self.assertIn("prodvers=(1, 1, 0, 0)", win_version)
-        self.assertEqual(win_version.count("'1.1.0.0'"), 2)
-        self.assertIn("FileVersion -ne '1.1.0.0'", workflow)
-        self.assertIn('TAG="v1.1.0"', workflow)
-        self.assertIn('ConnectionPilot-v1.1.0-Windows-EXE', workflow)
+        self.assertEqual(win_version.count("'1.1.1.0'"), 2)
+        self.assertIn("FileVersion -ne '1.1.1.0'", workflow)
+        self.assertIn('TAG="v1.1.1"', workflow)
+        self.assertIn('ConnectionPilot-v1.1.1-Windows-EXE', workflow)
 
     def test_assets_present(self):
         for name in ('connectionpilot.png', 'connectionpilot-header.png',

@@ -1,6 +1,6 @@
 CONNECTIONPILOT THIRD-PARTY NOTICES
 ===================================
-Applies to the Windows executable built from the ConnectionPilot v1.1.0
+Applies to the Windows executable built from the ConnectionPilot v1.1.1
 source and its Python/Playwright runtime. Build-only tools are
 identified separately below. This document does not change the
 license of ConnectionPilot's original code or branding.
