@@ -296,9 +296,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         candidates = []
         for i in range(anchor_count):
             if stop_event.is_set():
-                # Keep candidates discovered before Stop, just as per-row
-                # inserts did; the page cursor still remains unchanged.
-                if candidates:
+                # Keep candidates from the verified search page before Stop,
+                # but never persist cards collected after a late redirect.
+                if (candidates and
+                        urlsplit(page.url).path.rstrip("/").casefold() == "/search/results/people"):
                     added += store.add_many(candidates)
                 raise StopRun()
             if pause_event is not None and pause_event.is_set():
@@ -383,9 +384,19 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # database error can silently discard people we never examined.
                 extraction_errors += 1
                 continue
+        # Check account warnings and the destination before persisting any
+        # discovered cards. A redirect during hydration must never leak
+        # unrelated feed/profile links into the campaign queue.
+        check_protection(page)
+        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
+            notify(f"Results for '{search}' navigated away during inspection; "
+                   f"retaining page {page_no} without saving unrelated profiles.")
+            if paused_during_page:
+                return added
+            continue
         if candidates:
             # Commit even on a partially scanned page so Pause and Stop
-            # preserve all candidates already inspected.
+            # preserve candidates already inspected on the search page.
             added += store.add_many(candidates)
         if paused_during_page:
             # Keep this page pending: already collected leads are deduplicated
@@ -394,19 +405,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # A readable new member on a mixed results page must not obscure a
         # different, unnamed new member. Multiple links to a single person
         # are fine once any one link supplies that person's actual name.
-        # Account warnings can appear while result cards are being read.
-        # Check again before treating the page as complete or moving on to
-        # another search, even when the URL itself has not changed.
-        check_protection(page)
         unnamed_new_links = valid_profile_links - processed - named_profile_links
         # LinkedIn may append or replace cards after the first result appears.
         # Never mark a page as fully inspected if its link list changed
         # while we were reading the initial snapshot.
         result_list_changed = anchors.count() != anchor_count
-        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
-            notify(f"Results for '{search}' navigated away during inspection; "
-                   f"retaining page {page_no}.")
-        elif result_list_changed:
+        if result_list_changed:
             notify(f"Results for '{search}' changed during inspection; "
                    f"retaining page {page_no} to inspect newly loaded profiles.")
         elif extraction_errors:
