@@ -187,6 +187,25 @@ class Store:
             row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             return row[0] if row else default
 
+    def settings_for(self, keys):
+        """Load several saved values with one connection, preserving exact keys.
+
+        Chunk the IN query for SQLite builds with older parameter limits.
+        Missing keys remain absent so callers can apply their own defaults.
+        """
+        names = tuple(dict.fromkeys(keys))
+        if not names:
+            return {}
+        result = {}
+        with self._conn() as db:
+            for offset in range(0, len(names), 400):
+                batch = names[offset:offset + 400]
+                placeholders = ",".join("?" for _ in batch)
+                rows = db.execute(
+                    f"SELECT key, value FROM settings WHERE key IN ({placeholders})", batch)
+                result.update((row[0], row[1]) for row in rows)
+        return result
+
     def set_setting(self, key, value):
         self.set_settings({key: value})
 
