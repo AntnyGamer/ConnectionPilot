@@ -394,6 +394,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # A readable new member on a mixed results page must not obscure a
         # different, unnamed new member. Multiple links to a single person
         # are fine once any one link supplies that person's actual name.
+        # Account warnings can appear while result cards are being read.
+        # Check again before treating the page as complete or moving on to
+        # another search, even when the URL itself has not changed.
+        check_protection(page)
         unnamed_new_links = valid_profile_links - processed - named_profile_links
         # LinkedIn may append or replace cards after the first result appears.
         # Never mark a page as fully inspected if its link list changed
