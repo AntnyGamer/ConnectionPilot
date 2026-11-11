@@ -650,7 +650,9 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     # A pre-existing notice isn't evidence that *this* invitation was sent.
     sent_pattern = re.compile(r"Invitation sent|Your invitation has been sent|Invitation pending", re.I)
     existing_notice = page.get_by_text(sent_pattern)
-    had_notice = any(node.is_visible() for node in existing_notice.all())
+    # Counting existing notices lets us recognize an additional confirmation
+    # without mistaking an unchanged old notice for this person's invitation.
+    previous_notice_count = sum(node.is_visible() for node in existing_notice.all())
     # A late navigation or cross-site redirect must never initiate an invitation.
     if not is_trusted_linkedin_page(page.url) or normalize_profile(page.url) != url:
         return "skipped", "Profile navigated away before the Connect click; nothing clicked."
@@ -734,8 +736,8 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
                 except Exception:
                     # An obsolete header can be replaced at next refresh.
                     pass
-            new_notice = not had_notice and any(
-                node.is_visible() for node in sent_notice.all())
+            new_notice = sum(
+                node.is_visible() for node in sent_notice.all()) > previous_notice_count
             if pending or new_notice:
                 check_protection(page)
                 return "sent", "Invitation confirmed by LinkedIn UI."
