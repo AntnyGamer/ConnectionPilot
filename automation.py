@@ -895,13 +895,13 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                                  reason=f"Outside sending hours ({config['start_hour']}:00–{config['end_hour']}:00 Eastern).",
                                  preserve_pause_delay=False)
                     continue
-                today = store.attempts_today()
+                today, last_attempt = store.pacing_state()
                 if today >= config["daily_limit"]:
                     notify(f"Daily cap of {config['daily_limit']} reached. Waiting for tomorrow.")
                     wait_or_stop(seconds_until_tomorrow(now) + 60, stop_event, pause_event, notify,
                                  preserve_pause_delay=False)
                     continue
-                remaining = seconds_until_next_send(now, store.last_attempt_at(), config["cooldown"])
+                remaining = seconds_until_next_send(now, last_attempt, config["cooldown"])
                 if remaining:
                     wait_or_stop(remaining, stop_event, pause_event, notify)
                     continue
@@ -953,9 +953,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 # first potentially sending click, not during harmless preflight.
                 def can_send_now():
                     current = local_now()
-                    return (in_work_hours(current, config["start_hour"], config["end_hour"])
-                            and store.attempts_today() < config["daily_limit"]
-                            and seconds_until_next_send(current, store.last_attempt_at(), config["cooldown"]) == 0)
+                    if not in_work_hours(current, config["start_hour"], config["end_hour"]):
+                        return False
+                    today_count, latest_click = store.pacing_state()
+                    return (today_count < config["daily_limit"] and
+                            seconds_until_next_send(current, latest_click, config["cooldown"]) == 0)
 
                 def can_confirm_now():
                     current = local_now()
