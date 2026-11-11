@@ -163,6 +163,47 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(processed.call_count, 1)
         self.assertEqual(self.store.counts().get('queued'), 1)
 
+    def test_newly_loaded_search_links_keep_page_cursor_until_revisited(self):
+        # Result cards can hydrate after an earlier card has already appeared.
+        # A page must not be marked finished until a stable snapshot is read.
+        class Anchor:
+            def __init__(self, slug): self.slug = slug
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/' + self.slug + '/'
+            def inner_text(self, **kwargs): return self.slug.replace('-', ' ').title()
+            def evaluate(self, expression): return 'Policy analyst in government'
+
+        class Anchors:
+            checks = 0
+            def count(self):
+                self.checks += 1
+                return 1 if self.checks == 1 else 2
+            def nth(self, index): return Anchor(('first-person', 'second-person')[index])
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.anchors = Anchors()
+            def goto(self, *args, **kwargs): return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return self.anchors
+                return empty_locator()
+
+        page = Page()
+        messages = []
+        first = collect_results(page, self.store, ['policy'], ['policy'],
+                                threading.Event(), messages.append, 200,
+                                {'min_score':25})
+        self.assertEqual(first, 1)
+        self.assertEqual(self.store.setting('page:policy', '1'), '1')
+        self.assertIn('changed during inspection', ' '.join(messages))
+        second = collect_results(page, self.store, ['policy'], ['policy'],
+                                 threading.Event(), messages.append, 200,
+                                 {'min_score':25})
+        self.assertEqual(second, 1)
+        self.assertEqual(self.store.setting('page:policy'), '2')
+        self.assertEqual(self.store.queued_count(), 2)
+
     def test_generic_action_links_do_not_discard_unread_people(self):
         """Valid profile URLs without names must not be treated as inspected leads."""
         class ActionLink:
