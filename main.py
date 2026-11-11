@@ -491,7 +491,8 @@ class App:
         # User explicitly starts the campaign with this button. A second
         # confirmation would defeat one-click operation; permanent risk
         # disclosure remains visible in the main window.
-        previous_searches = STORE.setting("ui:searches")
+        saved_settings = STORE.settings_for(("ui:searches", "run:matching", "ui:browser_channel"))
+        previous_searches = saved_settings.get("ui:searches")
         # An edited search means the old unsent queue may no longer belong to
         # the user's requested audience. Preserve every recorded click and
         # discard only leads that have never been attempted.
@@ -508,7 +509,7 @@ class App:
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
-        matching_changed = STORE.setting("run:matching") != matching_config
+        matching_changed = saved_settings.get("run:matching") != matching_config
         if matching_changed:
             STORE.requeue_filtered()
             if not searches_reset:
@@ -538,7 +539,7 @@ class App:
         self.stop_btn.configure(state="normal")
         config = {"target": target, "daily_limit": daily, "cooldown": cooldown,
                   "searches": searches, "match_terms": matches, "filters": dict(self.filters),
-                  "data_dir": str(APP_DIR), "browser_channel": STORE.setting("ui:browser_channel", "chromium"),
+                  "data_dir": str(APP_DIR), "browser_channel": saved_settings.get("ui:browser_channel", "chromium"),
                   "start_hour": SEND_START_HOUR, "end_hour": SEND_END_HOUR}
         self.worker = threading.Thread(target=self.work, args=(config,), daemon=True)
         self.worker.start()
