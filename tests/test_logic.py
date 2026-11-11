@@ -514,6 +514,21 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.db.dashboard_stats(),
                          ({"queued": 1, "sent": 1}, 1, 1, 1))
 
+    def test_pacing_state_matches_separate_reads_with_one_connection(self):
+        from unittest.mock import patch
+        url = 'https://www.linkedin.com/in/pacing-state/'
+        with patch.object(self.db, '_conn', wraps=self.db._conn) as opened:
+            self.assertEqual(self.db.pacing_state(), (0, None))
+            self.assertEqual(opened.call_count, 1)
+        self.db.add(url, 'Pacing State', 'policy', 25)
+        self.db.mark(url, 'uncertain', 'Potential invitation')
+        expected = (self.db.attempts_today(), self.db.last_attempt_at())
+        with patch.object(self.db, '_conn', wraps=self.db._conn) as opened:
+            self.assertEqual(self.db.pacing_state(), expected)
+            self.assertEqual(opened.call_count, 1)
+        self.db.mark(url, 'sent', 'Confirmed')
+        self.assertEqual(self.db.pacing_state(), expected)
+
     def test_uncertain_attempt_counts_toward_daily_cap_and_cooldown(self):
         a='https://www.linkedin.com/in/alice/'
         b='https://www.linkedin.com/in/bob/'
@@ -614,6 +629,9 @@ class StorageTests(unittest.TestCase):
         with patch.object(self.db, '_now', return_value=later):
             self.db.mark(second, 'uncertain', 'Attempted click')
         self.assertEqual(self.db.last_attempt_at(), later)
+        with patch.object(self.db, '_today_bounds',
+                          return_value=('2026-11-01T', '2026-11-02T')):
+            self.assertEqual(self.db.pacing_state(), (2, later))
 
     def test_latest_attempt_uses_chronological_time_not_insert_order(self):
         first = 'https://www.linkedin.com/in/imported-recent/'
