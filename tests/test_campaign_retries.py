@@ -66,6 +66,23 @@ class WorkerRecoveryTests(unittest.TestCase):
                 self.assertFalse(self.store.has_attempt(url))
         self.page.goto.return_value = None
 
+    def test_initial_feed_access_denial_stops_before_discovery(self):
+        # Initial authentication/feed navigation needs the same fail-closed
+        # HTTP restrictions as search and member-profile navigation.
+        for code in (403, 429, 999):
+            with self.subTest(http_status=code):
+                self.page.goto.reset_mock(return_value=True)
+                self.page.goto.return_value = SimpleNamespace(status=code)
+                with patch('automation.collect_results') as discover, \
+                     patch('automation.send_one') as send:
+                    self.run_fake(ProtectionScreen)
+                self.page.goto.assert_called_once()
+                discover.assert_not_called()
+                send.assert_not_called()
+                self.browser.close.assert_called()
+                self.assertEqual(self.store.total_attempts(), 0)
+        self.page.goto.return_value = None
+
     def test_worker_does_not_query_status_counts_until_goal_reached(self):
         with patch.object(self.store, "counts",
                           side_effect=AssertionError("Unexpected idle status scan")), \
@@ -104,6 +121,38 @@ class WorkerRecoveryTests(unittest.TestCase):
         queued.assert_called_once()
         self.assertEqual(self.store.counts().get("queued"), 1)
 
+    def test_worker_reads_all_search_cursors_in_one_batch(self):
+        self.config['searches'] = ['political science', 'government', 'public policy']
+        with patch.object(self.store, 'settings_for',
+                          wraps=self.store.settings_for) as batch, \
+             patch.object(self.store, 'setting',
+                          side_effect=AssertionError('Per-key read')) as individual, \
+             patch('automation.collect_results', side_effect=StopRun('done')):
+            self.run_fake()
+        batch.assert_called_once_with([
+            'page:political science', 'page:government', 'page:public policy'])
+        individual.assert_not_called()
+
+    def test_worker_uses_combined_pacing_snapshot_including_preclick(self):
+        url = 'https://www.linkedin.com/in/pacing-worker/'
+        self.store.add(url, 'Pacing Worker', 'policy', 25)
+
+        def stop_after_preclick(*args):
+            # The pre-click callback is the ninth positional argument.
+            self.assertTrue(args[8]())
+            raise StopRun('checked')
+
+        with patch.object(self.store, 'pacing_state',
+                          wraps=self.store.pacing_state) as snapshot, \
+             patch.object(self.store, 'attempts_today',
+                          side_effect=AssertionError('Separate count query')), \
+             patch.object(self.store, 'last_attempt_at',
+                          side_effect=AssertionError('Separate latest query')), \
+             patch('automation.send_one', side_effect=stop_after_preclick):
+            self.run_fake()
+        self.assertEqual(snapshot.call_count, 2)
+        self.assertFalse(self.store.has_attempt(url))
+
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
         # The app must explicitly enable browser sandboxing on Windows.
@@ -135,6 +184,28 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.assertEqual(self.run_fake(), 2)
             self.assertEqual(collect.call_count, 3)
             self.assertTrue(any('retry' in s.lower() for s in self.status))
+
+    def test_exhausted_discovery_pages_stop_without_empty_retries(self):
+        self.store.set_setting('page:political science', '16')
+        with patch('automation.collect_results',
+                   side_effect=AssertionError('Nothing left to collect')) as collect:
+            self.assertEqual(self.run_fake(), 0)
+            collect.assert_not_called()
+        self.assertEqual(self.store.total_attempts(), 0)
+
+    def test_one_remaining_discovery_page_still_runs(self):
+        self.config['searches'].append('government')
+        self.store.set_setting('page:political science', '16')
+        self.store.set_setting('page:government', '15')
+        with patch('automation.collect_results', side_effect=StopRun('inspection')) as collect:
+            self.run_fake()
+            collect.assert_called_once()
+
+    def test_invalid_discovery_cursor_still_tries_safe_recovery(self):
+        self.store.set_setting('page:political science', 'bad saved cursor')
+        with patch('automation.collect_results', side_effect=StopRun('inspection')) as collect:
+            self.run_fake()
+            collect.assert_called_once()
 
     def test_navigation_failure_is_not_revisited_automatically(self):
         url = 'https://www.linkedin.com/in/retry-person/'

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from storage import Store
 from logic import _normalized_score_terms
-from automation import ProtectionScreen, check_protection, collect_results, send_one
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, send_one
 
 try:
     from playwright.sync_api import sync_playwright
@@ -484,9 +484,12 @@ class BrowserMockTests(unittest.TestCase):
     def test_failed_navigation_keeps_candidate_queued(self):
         self.db.add(MOCK_URL, 'Test Example', 'public policy', 25)
         class BadPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): raise TimeoutError('navigation timeout')
+            def __getattr__(self, key): return getattr(self.page, key)
         with self.assertRaises(TimeoutError):
-            send_one(BadPage(), {'url': MOCK_URL, 'name': 'Test Example'},
+            send_one(BadPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
                      self.db, lambda _: None)
         self.assertEqual(self.db.next_profile()['url'], MOCK_URL)
 
@@ -1120,6 +1123,42 @@ class BrowserMockTests(unittest.TestCase):
         result, _ = self.run_mock(html('<button>Pending</button>'))
         self.assertEqual(result, 'skipped')
 
+    def test_profile_navigation_timeout_checks_late_account_warning(self):
+        doc = html('<div role="alert">Invitation limit reached</div>')
+
+        class TimedOutPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+                raise TimeoutError('Navigation timed out')
+            def __getattr__(self, key): return getattr(self.page, key)
+
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        with self.assertRaises(ProtectionScreen):
+            send_one(TimedOutPage(self.page),
+                     {'url': MOCK_URL, 'name': 'Test Example'},
+                     self.db, lambda _: None)
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+
+    def test_profile_navigation_timeout_without_warning_remains_recoverable(self):
+        doc = html('<p>Normal member details</p>')
+
+        class TimedOutPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+                raise TimeoutError('Navigation timed out')
+            def __getattr__(self, key): return getattr(self.page, key)
+
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        with self.assertRaises(TimeoutError):
+            send_one(TimedOutPage(self.page),
+                     {'url': MOCK_URL, 'name': 'Test Example'},
+                     self.db, lambda _: None)
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+
     def test_warning_after_click_preserves_uncertain_status(self):
         self.db.add(MOCK_URL, 'Test Example', 'politics', 25)
         doc = html("""<button onclick="document.body.insertAdjacentHTML('beforeend','<p>Invitation limit reached</p>')">Connect</button>""")
@@ -1142,11 +1181,61 @@ class BrowserMockTests(unittest.TestCase):
         result, _ = self.run_mock(doc)
         self.assertEqual(result, 'uncertain')
 
+    def test_confirmation_notice_on_other_profile_never_marks_original_sent(self):
+        # A navigation after the first click must never let a toast on an
+        # unrelated LinkedIn member count as confirmation for the target.
+        doc = html("""<button id="c" onclick="
+            document.body.dataset.switched = '1';
+            document.body.insertAdjacentHTML('beforeend',
+              '<p id=notice>Invitation sent</p>')">Connect</button>""")
+
+        class RedirectPage:
+            def __init__(self, page):
+                self.page = page
+
+            @property
+            def url(self):
+                if self.page.locator('body').get_attribute('data-switched') == '1':
+                    return 'https://www.linkedin.com/in/someone-else/'
+                return MOCK_URL
+
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+
+            def wait_for_timeout(self, ms):
+                self.page.wait_for_timeout(min(ms, 10))
+
+            def __getattr__(self, key):
+                return getattr(self.page, key)
+
+        self.db.add(MOCK_URL, 'Test Example', 'public policy', 25)
+        result, reason = send_one(
+            RedirectPage(self.page),
+            {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None)
+        self.assertEqual(result, 'uncertain', reason)
+        self.assertIn('Page changed', reason)
+        self.assertTrue(self.db.has_attempt(MOCK_URL))
+        self.assertIsNone(self.db.next_profile())
+
     def test_old_confirmation_text_is_not_new_send_evidence(self):
         doc = html('<button>Connect</button><p>Invitation sent</p>')
         result, reason = self.run_mock(doc)
         self.assertEqual(result, 'uncertain')
         self.assertIn('could not verify', reason)
+
+    def test_new_confirmation_beside_existing_notice_is_detected(self):
+        # An old visible confirmation must not mask a separate fresh one.
+        # No Pending button or new wording is required as evidence.
+        doc = html("""<button id="c" onclick="
+            this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1);
+            document.querySelector('#notices').insertAdjacentHTML(
+                'beforeend', '<p>Invitation sent</p>')">Connect</button>
+            <div id="notices"><p>Invitation sent</p></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#c').get_attribute('data-clicks'), '1')
+        self.assertEqual(self.page.locator('#notices p').count(), 2)
 
     def test_invisible_extra_dialog_does_not_block_send(self):
         doc = html('''<button id="c" onclick="document.getElementById('d').hidden=false">Connect</button>''', '''<div role="dialog" id="d" hidden><button onclick="document.querySelector('#c').textContent='Pending'; document.querySelector('#d').hidden=true">Send without a note</button></div><div role="dialog" hidden><button>Unrelated</button></div>''')
@@ -1256,6 +1345,68 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'deferred')
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
         self.assertEqual(self.db.attempts_today(), 0)
+
+    def test_pause_arriving_during_preclick_guard_leaves_candidate_queued(self):
+        pause = threading.Event()
+        doc = html('<button id="c" onclick="this.textContent=\'Pending\'">Connect</button>')
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        def check():
+            pause.set()
+            return True
+        result, reason = send_one(
+            LocalPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None, pause_event=pause, pre_click_check=check)
+        self.assertEqual(result, 'paused', reason)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+        self.assertEqual(self.db.next_profile()['url'], MOCK_URL)
+
+    def test_stop_arriving_during_preclick_guard_never_clicks(self):
+        stop = threading.Event()
+        doc = html('<button id="c" onclick="this.textContent=\'Pending\'">Connect</button>')
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        def check():
+            stop.set()
+            return True
+        with self.assertRaises(StopRun):
+            send_one(LocalPage(self.page),
+                     {'url': MOCK_URL, 'name': 'Test Example'}, self.db,
+                     lambda _: None, stop_event=stop, pre_click_check=check)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+
+    def test_stop_arriving_during_confirmation_guard_blocks_final_click(self):
+        stop = threading.Event()
+        doc = html("<button id='c' onclick=\"document.getElementById('d').hidden=false\">Connect</button>", """
+            <div role='dialog' id='d' hidden><button id='final'
+            onclick="document.querySelector('#c').textContent='Pending'">Send without a note</button></div>""")
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        def confirmation_check():
+            stop.set()
+            return True
+        result, reason = send_one(
+            LocalPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None, stop_event=stop,
+            pre_confirm_check=confirmation_check)
+        self.assertEqual(result, 'uncertain', reason)
+        self.assertIn('interrupted', reason)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
+        self.assertTrue(self.db.has_attempt(MOCK_URL))
 
     def test_pause_at_confirmation_dialog_prevents_final_send(self):
         pause = threading.Event()

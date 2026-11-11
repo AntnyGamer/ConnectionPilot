@@ -58,21 +58,33 @@ class Store:
         return datetime.now(TZ).isoformat()
 
     def add(self, url, name, headline, score):
-        now = self._now()
+        """Insert or update one candidate; retain the original public API."""
+        return bool(self.add_many(((url, name, headline, score),)))
+
+    def add_many(self, candidates):
+        """Persist a search-page batch in one transaction, preserving add() semantics.
+
+        Duplicates update only an unattempted queued candidate's best score.
+        Recorded clicks, status, identity, and discovery order are immutable.
+        """
+        added = 0
         with self._conn() as db:
-            cur = db.execute("""INSERT OR IGNORE INTO profiles
-                (url, name, headline, score, discovered_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)""", (url, name[:120], headline[:500], score, now, now))
-            if cur.rowcount:
-                return True
-            # The same person may appear in several searches. Keep the best
-            # relevance score for unsent leads without changing their identity,
-            # status, discovery order, or any recorded invitation attempt.
-            db.execute("""UPDATE profiles SET score=?, headline=?, updated_at=?
-                WHERE url=? AND status='queued' AND score < ?
-                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
-                       (score, headline[:500], now, url, score))
-            return False
+            for url, name, headline, score in candidates:
+                now = self._now()
+                cur = db.execute("""INSERT OR IGNORE INTO profiles
+                    (url, name, headline, score, discovered_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (url, name[:120], headline[:500], score, now, now))
+                if cur.rowcount:
+                    added += 1
+                    continue
+                db.execute("""UPDATE profiles SET score=?, headline=?, updated_at=?
+                    WHERE url=? AND status='queued' AND score < ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM attempts WHERE attempts.url=profiles.url
+                      )""",
+                    (score, headline[:500], now, url, score))
+        return added
 
     def processed_urls(self):
         """Previously completed people should not be read from search cards again.
@@ -175,6 +187,25 @@ class Store:
             row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             return row[0] if row else default
 
+    def settings_for(self, keys):
+        """Load several saved values with one connection, preserving exact keys.
+
+        Chunk the IN query for SQLite builds with older parameter limits.
+        Missing keys remain absent so callers can apply their own defaults.
+        """
+        names = tuple(dict.fromkeys(keys))
+        if not names:
+            return {}
+        result = {}
+        with self._conn() as db:
+            for offset in range(0, len(names), 400):
+                batch = names[offset:offset + 400]
+                placeholders = ",".join("?" for _ in batch)
+                rows = db.execute(
+                    f"SELECT key, value FROM settings WHERE key IN ({placeholders})", batch)
+                result.update((row[0], row[1]) for row in rows)
+        return result
+
     def set_setting(self, key, value):
         self.set_settings({key: value})
 
@@ -201,6 +232,18 @@ class Store:
         with self._conn() as db:
             return db.execute("SELECT count(*) FROM attempts").fetchone()[0]
 
+    def attempt_outcomes(self):
+        """Return (total, confirmed, not_confirmed) from the immutable click ledger.
+
+        A click subsequently marked skipped remains a possible invitation,
+        rather than disappearing from the goal-completion breakdown.
+        """
+        with self._conn() as db:
+            total, confirmed = db.execute("""SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN result='sent' THEN 1 ELSE 0 END), 0)
+                FROM attempts""").fetchone()
+        return total, confirmed, total - confirmed
+
     def discard_stale_leads(self):
         """Discard old unattempted search leads, retaining all invitation history."""
         with self._conn() as db:
@@ -226,7 +269,14 @@ class Store:
         start, end = self._today_bounds()
         with self._conn() as db:
             db.execute("BEGIN")  # Keep all counters in one read transaction.
-            rows = db.execute("SELECT status, count(*) FROM profiles GROUP BY status").fetchall()
+            # The displayed queue is the *sendable* queue, not every row
+            # still labeled queued in a legacy/stale state. Attempt history
+            # always wins over a profile's mutable status.
+            rows = db.execute("""SELECT status, count(*) FROM profiles
+                WHERE status != 'queued'
+                   OR NOT EXISTS (SELECT 1 FROM attempts
+                                  WHERE attempts.url=profiles.url)
+                GROUP BY status""").fetchall()
             counts = {row[0]: row[1] for row in rows}
             total = db.execute("SELECT count(*) FROM attempts").fetchone()[0]
             possible, confirmed = db.execute("""SELECT count(*),
@@ -234,6 +284,22 @@ class Store:
                 FROM attempts WHERE initiated_at >= ? AND initiated_at < ?""",
                 (start, end)).fetchone()
             return counts, total, confirmed, possible
+
+    def pacing_state(self):
+        """Read today's attempt count and newest click together for pacing.
+
+        This replaces two separate SQLite connections on the normal sending
+        path, with both values from the same committed read snapshot.
+        """
+        start, end = self._today_bounds()
+        with self._conn() as db:
+            db.execute("BEGIN")
+            count = db.execute("""SELECT count(*) FROM attempts
+                WHERE initiated_at >= ? AND initiated_at < ?""",
+                (start, end)).fetchone()[0]
+            row = db.execute("""SELECT initiated_at FROM attempts
+                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchone()
+            return count, row[0] if row else None
 
     def attempts_today(self):
         """Conservatively count unverified clicks as possible invitations."""

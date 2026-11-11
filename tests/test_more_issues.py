@@ -86,12 +86,19 @@ class QueueTests(unittest.TestCase):
 
     def test_pause_in_discovery_keeps_page_and_resumes_without_duplicates(self):
         pause = threading.Event()
+        pause_on_first = [True]
 
         class Anchor:
             def __init__(self, slug): self.slug = slug
             def is_visible(self, **kw): return True
             def get_attribute(self, name): return '/in/' + self.slug + '/'
-            def evaluate(self, expression): return 'Public policy analyst working in government and legislation.'
+            def evaluate(self, expression):
+                # Pause while inspecting the first result, before the batch
+                # is persisted; next iteration must notice the pause.
+                if self.slug == 'person-one' and pause_on_first[0]:
+                    pause_on_first[0] = False
+                    pause.set()
+                return 'Public policy analyst working in government and legislation.'
             def inner_text(self, **kw): return self.slug.replace('-', ' ').title()
 
         class Anchors:
@@ -113,16 +120,9 @@ class QueueTests(unittest.TestCase):
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
                 return empty_locator()
 
-        original_add = self.store.add
-        def first_add(*args):
-            result = original_add(*args)
-            pause.set()
-            return result
-
-        with patch.object(self.store, 'add', side_effect=first_add):
-            added = collect_results(Page(), self.store, ['government'], ['policy'],
-                                    threading.Event(), lambda s: None, 200,
-                                    {'min_score':25}, pause)
+        added = collect_results(Page(), self.store, ['government'], ['policy'],
+                                threading.Event(), lambda s: None, 200,
+                                {'min_score':25}, pause)
         self.assertEqual(added, 1)
         self.assertEqual(self.store.setting('page:government', '1'), '1')
         self.assertEqual(self.store.counts().get('queued'), 1)
@@ -155,13 +155,168 @@ class QueueTests(unittest.TestCase):
                     return Anchors()
                 return empty_locator()
 
-        with patch.object(self.store, 'processed_urls', wraps=self.store.processed_urls) as processed:
+        with patch.object(self.store, 'processed_urls', wraps=self.store.processed_urls) as processed, \
+             patch.object(self.store, 'settings_for', wraps=self.store.settings_for) as batched, \
+             patch.object(self.store, 'setting', side_effect=AssertionError('Per-key read')):
             count = collect_results(Page(), self.store,
                                     ['policy', 'government'], ['policy'],
                                     threading.Event(), lambda _: None, 200)
         self.assertEqual(count, 1)
         self.assertEqual(processed.call_count, 1)
+        batched.assert_called_once_with(['page:policy', 'page:government'])
         self.assertEqual(self.store.counts().get('queued'), 1)
+
+    def test_newly_loaded_search_links_keep_page_cursor_until_revisited(self):
+        # Result cards can hydrate after an earlier card has already appeared.
+        # A page must not be marked finished until a stable snapshot is read.
+        class Anchor:
+            def __init__(self, slug): self.slug = slug
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/' + self.slug + '/'
+            def inner_text(self, **kwargs): return self.slug.replace('-', ' ').title()
+            def evaluate(self, expression): return 'Policy analyst in government'
+
+        class Anchors:
+            checks = 0
+            def count(self):
+                self.checks += 1
+                return 1 if self.checks == 1 else 2
+            def nth(self, index): return Anchor(('first-person', 'second-person')[index])
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.anchors = Anchors()
+            def goto(self, *args, **kwargs): return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return self.anchors
+                return empty_locator()
+
+        page = Page()
+        messages = []
+        first = collect_results(page, self.store, ['policy'], ['policy'],
+                                threading.Event(), messages.append, 200,
+                                {'min_score':25})
+        self.assertEqual(first, 1)
+        self.assertEqual(self.store.setting('page:policy', '1'), '1')
+        self.assertIn('changed during inspection', ' '.join(messages))
+        second = collect_results(page, self.store, ['policy'], ['policy'],
+                                 threading.Event(), messages.append, 200,
+                                 {'min_score':25})
+        self.assertEqual(second, 1)
+        self.assertEqual(self.store.setting('page:policy'), '2')
+        self.assertEqual(self.store.queued_count(), 2)
+
+    def test_warning_appearing_during_discovery_stops_before_next_search(self):
+        # A restriction warning may appear after the initial protection checks
+        # as the search result cards are hydrated/read.
+        from automation import ProtectionScreen
+
+        class Alert:
+            def is_visible(self): return True
+            def evaluate(self, expression): return False
+            def inner_text(self, **kw): return 'Invitation limit reached'
+            def get_attribute(self, name): return 'alert'
+
+        class Anchor:
+            def __init__(self, page): self.page = page
+            def is_visible(self, **kw): return True
+            def get_attribute(self, key): return '/in/person-one/'
+            def inner_text(self, **kw): return 'Person One'
+            def evaluate(self, expression):
+                self.page.warning = True
+                return 'Government policy analyst'
+
+        class Anchors:
+            def __init__(self, page): self.page = page
+            def count(self): return 1
+            def nth(self, index): return Anchor(self.page)
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.warning = False
+            def goto(self, *args, **kwargs): return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors(self)
+                if selector.startswith('[role="alert"],'):
+                    return SimpleNamespace(all=lambda: [Alert()] if self.warning else [])
+                return empty_locator()
+
+        with self.assertRaises(ProtectionScreen):
+            collect_results(Page(), self.store, ['policy', 'government'], ['policy'],
+                            threading.Event(), lambda _: None, 200,
+                            {'min_score':25})
+        self.assertEqual(self.store.setting('page:policy', '1'), '1')
+        self.assertIsNone(self.store.setting('page:government'))
+        self.assertEqual(self.store.total_attempts(), 0)
+        self.assertEqual(self.store.queued_count(), 0)
+
+    def test_redirect_while_reading_cards_never_queues_unrelated_profiles(self):
+        class Anchor:
+            def __init__(self, page): self.page = page
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/someone/'
+            def inner_text(self, **kwargs): return 'Some One'
+            def evaluate(self, expression):
+                # A late navigation replaces search results while cards are
+                # being inspected. Queued people must belong to that search.
+                self.page.url = 'https://www.linkedin.com/feed/'
+                return 'Policy researcher working in government'
+
+        class Anchors:
+            def __init__(self, page): self.page = page
+            def count(self): return 1
+            def nth(self, index): return Anchor(self.page)
+
+        class Page:
+            def __init__(self):
+                self.url = 'https://www.linkedin.com/search/results/people/'
+            def goto(self, *args, **kwargs): return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors(self)
+                return empty_locator()
+
+        messages = []
+        added = collect_results(Page(), self.store, ['policy'], ['policy'],
+                                threading.Event(), messages.append, 20,
+                                {'min_score':25})
+        self.assertEqual(added, 0)
+        self.assertEqual(self.store.queued_count(), 0)
+        self.assertEqual(self.store.setting('page:policy', '1'), '1')
+        self.assertIn('navigated away during inspection', ' '.join(messages))
+
+    def test_repeated_search_phrase_still_advances_cursor_each_time(self):
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/same-person/'
+            def inner_text(self, **kwargs): return 'Same Person'
+            def evaluate(self, expression): return 'Public policy analyst'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, index): return Anchor()
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.visited = []
+            def goto(self, url, **kwargs):
+                self.visited.append(url)
+                return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return empty_locator()
+
+        page = Page()
+        added = collect_results(page, self.store, ['policy', 'policy'], ['policy'],
+                                threading.Event(), lambda _: None, 200,
+                                {'min_score':25})
+        self.assertEqual(added, 1)
+        self.assertEqual(self.store.setting('page:policy'), '3')
+        self.assertIn('page=1', page.visited[0])
+        self.assertIn('page=2', page.visited[1])
 
     def test_generic_action_links_do_not_discard_unread_people(self):
         """Valid profile URLs without names must not be treated as inspected leads."""

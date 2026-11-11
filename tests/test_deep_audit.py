@@ -23,6 +23,7 @@ class DeepAuditTests(unittest.TestCase):
         self.store.mark(url,'uncertain','Connect action initiated')
         self.store.mark(url,'skipped','LinkedIn required relationship verification')
         self.assertEqual(self.store.total_attempts(),1)
+        self.assertEqual(self.store.attempt_outcomes(), (1, 0, 1))
         self.assertEqual(self.store.counts().get('uncertain',0),0)
         page=SimpleNamespace(url='https://www.linkedin.com/feed/',goto=MagicMock())
         browser=SimpleNamespace(pages=[page],close=MagicMock())
@@ -36,6 +37,20 @@ class DeepAuditTests(unittest.TestCase):
         page.goto.assert_not_called()
         find.assert_not_called();send.assert_not_called()
         self.assertTrue(any('Goal reached' in s for s in logs))
+        self.assertTrue(any('0 confirmed and 1 not confirmed' in s for s in logs))
+
+    def test_attempt_outcomes_include_post_click_skips(self):
+        base = 'https://www.linkedin.com/in/'
+        for slug in ('sent', 'skipped', 'uncertain', 'never-clicked'):
+            self.store.add(base + slug + '/', slug, 'policy', 25)
+        self.store.mark(base + 'sent/', 'uncertain', 'Potential invitation')
+        self.store.mark(base + 'sent/', 'sent', 'LinkedIn confirmed')
+        self.store.mark(base + 'skipped/', 'uncertain', 'Clicked Connect')
+        self.store.mark(base + 'skipped/', 'skipped', 'Relationship confirmation required')
+        self.store.mark(base + 'uncertain/', 'uncertain', 'Clicked Connect')
+        self.store.mark(base + 'never-clicked/', 'skipped', 'No Connect action')
+        self.assertEqual(self.store.attempt_outcomes(), (3, 1, 2))
+        self.assertEqual(self.store.total_attempts(), 3)
 
     def test_queue_reset_never_removes_attempted_or_completed(self):
         cases={'old-queued':'queued','old-attempted':'uncertain','old-sent':'sent','old-filtered':'filtered'}

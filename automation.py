@@ -224,6 +224,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Terminal candidates cannot change during discovery. Load them once
     # rather than querying all completed profiles per search phrase.
     processed = store.processed_urls()
+    saved_pages = store.settings_for(["page:" + search for search in searches])
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
@@ -231,7 +232,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             return added
         key = "page:" + search
         try:
-            page_no = int(store.setting(key, "1"))
+            page_no = int(saved_pages.get(key, "1"))
         except (TypeError, ValueError, OverflowError):
             page_no = 1
         if page_no < 1:
@@ -293,8 +294,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
         paused_during_page = False
+        candidates = []
         for i in range(anchor_count):
             if stop_event.is_set():
+                # Keep candidates from the verified search page before Stop,
+                # but never persist cards collected after a late redirect.
+                if (candidates and
+                        urlsplit(page.url).path.rstrip("/").casefold() == "/search/results/people"):
+                    added += store.add_many(candidates)
                 raise StopRun()
             if pause_event is not None and pause_event.is_set():
                 paused_during_page = True
@@ -370,13 +377,28 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     if any(term in folded_snippet for term in exclusions):
                         continue
                 seen_this_page.add(url)
-                if store.add(url, name, snippet, score):
-                    added += 1
+                # Avoid opening a new SQLite connection for every profile
+                # link. A batch uses the same insert/update rules as add().
+                candidates.append((url, name, snippet, score))
             except Exception:
                 # Retain the current page number: otherwise a temporary DOM or
                 # database error can silently discard people we never examined.
                 extraction_errors += 1
                 continue
+        # Check account warnings and the destination before persisting any
+        # discovered cards. A redirect during hydration must never leak
+        # unrelated feed/profile links into the campaign queue.
+        check_protection(page)
+        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
+            notify(f"Results for '{search}' navigated away during inspection; "
+                   f"retaining page {page_no} without saving unrelated profiles.")
+            if paused_during_page:
+                return added
+            continue
+        if candidates:
+            # Commit even on a partially scanned page so Pause and Stop
+            # preserve candidates already inspected on the search page.
+            added += store.add_many(candidates)
         if paused_during_page:
             # Keep this page pending: already collected leads are deduplicated
             # and the rest can be inspected safely after Resume.
@@ -385,7 +407,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # different, unnamed new member. Multiple links to a single person
         # are fine once any one link supplies that person's actual name.
         unnamed_new_links = valid_profile_links - processed - named_profile_links
-        if extraction_errors:
+        # LinkedIn may append or replace cards after the first result appears.
+        # Never mark a page as fully inspected if its link list changed
+        # while we were reading the initial snapshot.
+        result_list_changed = anchors.count() != anchor_count
+        if result_list_changed:
+            notify(f"Results for '{search}' changed during inspection; "
+                   f"retaining page {page_no} to inspect newly loaded profiles.")
+        elif extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
         elif unnamed_new_links:
@@ -394,6 +423,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         elif valid_profile_links:
             # Every nonprocessed link is named, or all links were processed.
             store.set_setting(key, page_no + 1)
+            # Keep the prefetched snapshot in sync if a caller repeats a
+            # search phrase in one discovery pass.
+            saved_pages[key] = str(page_no + 1)
         else:
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
         notify(f"Queued {added} new matches this pass.")
@@ -552,7 +584,15 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     """Return sent/skipped/uncertain; never retry a potentially successful invitation."""
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
-    response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    try:
+        response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    except (PlaywrightTimeoutError, TimeoutError):
+        # Search timeouts already check for a late account warning. Apply
+        # the same protection to profile timeouts before the worker considers
+        # an unclicked candidate a recoverable skip.
+        check_protection(page)
+        raise
     reject_denied_page(response)
     # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
     # verified introduction, retry the safe inspection without clicking.
@@ -640,7 +680,9 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     # A pre-existing notice isn't evidence that *this* invitation was sent.
     sent_pattern = re.compile(r"Invitation sent|Your invitation has been sent|Invitation pending", re.I)
     existing_notice = page.get_by_text(sent_pattern)
-    had_notice = any(node.is_visible() for node in existing_notice.all())
+    # Counting existing notices lets us recognize an additional confirmation
+    # without mistaking an unchanged old notice for this person's invitation.
+    previous_notice_count = sum(node.is_visible() for node in existing_notice.all())
     # A late navigation or cross-site redirect must never initiate an invitation.
     if not is_trusted_linkedin_page(page.url) or normalize_profile(page.url) != url:
         return "skipped", "Profile navigated away before the Connect click; nothing clicked."
@@ -654,6 +696,12 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     # Loading a slow profile could otherwise allow sending beyond the cap.
     if pre_click_check is not None and not pre_click_check():
         return "deferred", "Sending conditions changed during preflight; candidate remains queued."
+    # The pacing callback can block on SQLite long enough for Pause/Stop to
+    # arrive. Recheck before reserving any invitation attempt.
+    if stop_event is not None and stop_event.is_set():
+        raise StopRun()
+    if pause_event is not None and pause_event.is_set():
+        return "paused", "Paused before sending; candidate remains queued."
     # An already-disabled or vanished control cannot initiate a request.
     # Check before writing an attempt so a harmless no-op does not consume
     # the user's goal, cap or cooldown.
@@ -702,6 +750,11 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             # pre-click cooldown check here or try this invitation again.
             if pre_confirm_check is not None and not pre_confirm_check():
                 return "uncertain", "Sending window or daily cap changed before final confirmation; no second click."
+            # The confirmation callback can also block on SQLite. Never
+            # send a second/final click after Stop or Pause arrived there.
+            if ((stop_event is not None and stop_event.is_set()) or
+                    (pause_event is not None and pause_event.is_set())):
+                return "uncertain", "Confirmation interrupted after eligibility check; no final click."
             action.click(timeout=7000)
         # LinkedIn can re-render the introduction after the final click.
         # Refresh the verified profile's action panel instead of relying on
@@ -709,7 +762,15 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
         sent_notice = page.get_by_text(sent_pattern)
         current_header = header
         for attempt in range(21):
-            if attempt and attempt % 3 == 0 and normalize_profile(page.url) == url:
+            # A notice on a different member's page is not proof that this
+            # invitation succeeded. Never retry the potentially sent action.
+            if normalize_profile(page.url) != url:
+                check_protection(page)
+                return "uncertain", (
+                    "Page changed after invitation click; confirmation could not "
+                    "be attributed to the intended profile. No retry attempted."
+                )
+            if attempt and attempt % 3 == 0:
                 try:
                     refreshed_header, _ = _profile_intro(page, profile["name"])
                     if refreshed_header is not None:
@@ -724,8 +785,11 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
                 except Exception:
                     # An obsolete header can be replaced at next refresh.
                     pass
-            new_notice = not had_notice and any(
-                node.is_visible() for node in sent_notice.all())
+            # Keep the common no-previous-notice path short-circuiting,
+            # while still detecting additional notices beside existing ones.
+            visible_notices = (node.is_visible() for node in sent_notice.all())
+            new_notice = (sum(visible_notices) > previous_notice_count
+                          if previous_notice_count else any(visible_notices))
             if pending or new_notice:
                 check_protection(page)
                 return "sent", "Invitation confirmed by LinkedIn UI."
@@ -742,6 +806,14 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
         return "uncertain", "UI error after click: " + safe_diagnostic(exc, 180)
 
 
+def _goal_progress_message(store):
+    """Format completed-goal status consistently from the attempt ledger."""
+    total, confirmed, unconfirmed = store.attempt_outcomes()
+    return (f"Goal reached: {total} total invitation attempt(s), including "
+            f"{confirmed} confirmed and {unconfirmed} not confirmed. "
+            "Some clicks may have been rejected by LinkedIn.")
+
+
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
     """Run in a background thread. One click launches one visible browser session."""
     if stop_event.is_set():
@@ -750,10 +822,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     # the immutable click ledger locally before launching any browser.
     attempted = store.total_attempts()
     if attempted >= config["target"]:
-        counts = store.counts()
-        notify(f"Goal reached: {attempted} total invitation attempt(s), including "
-               f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
-               "unconfirmed. Some clicks may have been rejected by LinkedIn.")
+        notify(_goal_progress_message(store))
         on_update()
         return
     try:
@@ -786,7 +855,9 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             raise
         try:
             page = browser.pages[0] if browser.pages else browser.new_page()
-            page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=45000)
+            feed_response = page.goto("https://www.linkedin.com/feed/",
+                                      wait_until="domcontentloaded", timeout=45000)
+            reject_denied_page(feed_response)
             if channel in SUPPORTED:
                 # Google sign-in must happen in the NORMAL browser, not the controlled one.
                 # Only the already-established LinkedIn session is reused here.
@@ -816,6 +887,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             searches = unique_phrases(config["searches"])
             match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
+            cursor_keys = ["page:" + term for term in searches]
             discovery_failures = 0
             while not stop_event.is_set():
                 if pause_event.is_set():
@@ -823,12 +895,9 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                     continue
                 attempted = store.total_attempts()
                 if attempted >= config["target"]:
-                    # Reading grouped profile counts is unnecessary on every
-                    # idle/active worker iteration; only goal reporting uses it.
-                    counts = store.counts()
-                    notify(f"Goal reached: {attempted} total invitation attempt(s), including "
-                           f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
-                           "unconfirmed. Some clicks may have been rejected by LinkedIn.")
+                    # Goal reporting must use the click ledger, not profile
+                    # statuses: a potential click can later become "skipped".
+                    notify(_goal_progress_message(store))
                     return
                 now = local_now()
                 if not in_work_hours(now, config["start_hour"], config["end_hour"]):
@@ -837,27 +906,40 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                                  reason=f"Outside sending hours ({config['start_hour']}:00–{config['end_hour']}:00 Eastern).",
                                  preserve_pause_delay=False)
                     continue
-                today = store.attempts_today()
+                today, last_attempt = store.pacing_state()
                 if today >= config["daily_limit"]:
                     notify(f"Daily cap of {config['daily_limit']} reached. Waiting for tomorrow.")
                     wait_or_stop(seconds_until_tomorrow(now) + 60, stop_event, pause_event, notify,
                                  preserve_pause_delay=False)
                     continue
-                remaining = seconds_until_next_send(now, store.last_attempt_at(), config["cooldown"])
+                remaining = seconds_until_next_send(now, last_attempt, config["cooldown"])
                 if remaining:
                     wait_or_stop(remaining, stop_event, pause_event, notify)
                     continue
                 profile = store.next_profile()
                 if not profile:
                     notify("Finding new matching professionals…")
-                    before_pages = [store.setting("page:" + term, "1") for term in searches]
+                    before_values = store.settings_for(cursor_keys)
+                    before_pages = [before_values.get(key, "1") for key in cursor_keys]
+                    # Once all search cursors exceed the built-in 15-page
+                    # ceiling there is no useful retry: discovery would never
+                    # visit another result page until searches are changed.
+                    def exhausted_cursor(value):
+                        try:
+                            return int(value) > 15
+                        except (TypeError, ValueError, OverflowError):
+                            return False
+                    if searches and all(exhausted_cursor(value) for value in before_pages):
+                        raise StopRun("All searches reached the 15-page discovery limit. "
+                                      "Add or change search phrases to restart discovery.")
                     new_count = collect_results(page, store, searches, match_terms, stop_event, notify,
                                                 config["target"], filters, pause_event)
                     on_update()
                     if pause_event.is_set():
                         continue
                     if not new_count:
-                        after_pages = [store.setting("page:" + term, "1") for term in searches]
+                        after_values = store.settings_for(cursor_keys)
+                        after_pages = [after_values.get(key, "1") for key in cursor_keys]
                         if after_pages != before_pages:
                             # Pages with only previously seen or nonmatching profiles
                             # must not prevent discovery on subsequent result pages.
@@ -882,9 +964,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 # first potentially sending click, not during harmless preflight.
                 def can_send_now():
                     current = local_now()
-                    return (in_work_hours(current, config["start_hour"], config["end_hour"])
-                            and store.attempts_today() < config["daily_limit"]
-                            and seconds_until_next_send(current, store.last_attempt_at(), config["cooldown"]) == 0)
+                    if not in_work_hours(current, config["start_hour"], config["end_hour"]):
+                        return False
+                    today_count, latest_click = store.pacing_state()
+                    return (today_count < config["daily_limit"] and
+                            seconds_until_next_send(current, latest_click, config["cooldown"]) == 0)
 
                 def can_confirm_now():
                     current = local_now()

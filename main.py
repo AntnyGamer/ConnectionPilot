@@ -38,7 +38,7 @@ from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
 APP_DIR = Path.home() / "ConnectionPilot"
-APP_VERSION = "v1.1.0"
+APP_VERSION = "v1.1.1"
 
 
 def _startup_storage_error(message):
@@ -108,9 +108,11 @@ MAX_UI_LOG_LINES = 1000
 MAX_UI_EVENTS_PER_TICK = 100
 
 
-def initial_search_inputs(store):
+def initial_search_inputs(store, values=None):
     """Keep existing users' saved terms; leave fresh installations blank."""
-    return store.setting("ui:searches", ""), store.setting("ui:matches", "")
+    if values is None:
+        values = store.settings_for(("ui:searches", "ui:matches"))
+    return values.get("ui:searches", ""), values.get("ui:matches", "")
 
 
 class App:
@@ -127,6 +129,10 @@ class App:
         self.signin_process = None
         self.running = False
         self.closing = False
+        # Load every UI preference from one consistent startup query.
+        startup_values = STORE.settings_for((
+            "ui:target", "ui:daily", "ui:cooldown",
+            "ui:searches", "ui:matches", "ui:filters"))
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -180,13 +186,13 @@ class App:
         top = ttk.Frame(panel, style="Card.TFrame")
         top.pack(fill="x")
         ttk.Label(top, text="Invitation goal", style="Card.TLabel").grid(row=0, column=0, sticky="w")
-        self.target = tk.IntVar(value=safe_saved_int(STORE.setting("ui:target", "200"), 200, 1, 5000))
+        self.target = tk.IntVar(value=safe_saved_int(startup_values.get("ui:target", "200"), 200, 1, 5000))
         ttk.Spinbox(top, textvariable=self.target, from_=1, to=5000, width=8).grid(row=1, column=0, sticky="w", pady=(3, 10))
         ttk.Label(top, text="Daily invitation cap", style="Card.TLabel").grid(row=0, column=1, sticky="w", padx=(25, 0))
-        self.daily = tk.IntVar(value=safe_saved_int(STORE.setting("ui:daily", "500"), 500, 1, 500))
+        self.daily = tk.IntVar(value=safe_saved_int(startup_values.get("ui:daily", "500"), 500, 1, 500))
         ttk.Spinbox(top, textvariable=self.daily, from_=1, to=500, width=8).grid(row=1, column=1, sticky="w", padx=(25, 0), pady=(3, 10))
         ttk.Label(top, text="Cooldown (seconds)", style="Card.TLabel").grid(row=0, column=2, sticky="w", padx=(25, 0))
-        saved_cooldown = STORE.setting("ui:cooldown", "90")
+        saved_cooldown = startup_values.get("ui:cooldown", "90")
         self.cooldown = tk.DoubleVar(value=float(saved_cooldown) if valid_cooldown_seconds(saved_cooldown) else 90.0)
         ttk.Spinbox(top, textvariable=self.cooldown, from_=MIN_COOLDOWN_SECONDS,
                     to=MAX_COOLDOWN_SECONDS, increment=0.1, format="%.1f", width=10).grid(row=1, column=2, sticky="w", padx=(25, 0), pady=(3, 10))
@@ -196,7 +202,7 @@ class App:
         self.search_box = tk.Text(panel, height=5, bg="#fbfdff", fg=COLORS["ink"],
                                   font=("Segoe UI", 9), relief="solid", bd=1, wrap="word")
         self.search_box.pack(fill="x", pady=(4, 10))
-        saved_searches, saved_matches = initial_search_inputs(STORE)
+        saved_searches, saved_matches = initial_search_inputs(STORE, startup_values)
         self.search_box.insert("1.0", saved_searches)
 
         ttk.Label(panel, text="Relevant profile terms (comma-separated)", style="Card.TLabel").pack(anchor="w")
@@ -205,7 +211,7 @@ class App:
         self.match_box.pack(fill="x", pady=(4, 8))
         self.match_box.insert("1.0", saved_matches)
 
-        self.filters = self.load_filters()
+        self.filters = self.load_filters(startup_values.get("ui:filters", "{}"))
         filter_row = ttk.Frame(panel, style="Card.TFrame")
         filter_row.pack(fill="x", pady=(0, 8))
         ttk.Button(filter_row, text="Advanced filters…", command=self.edit_filters).pack(side="left")
@@ -267,9 +273,10 @@ class App:
         self.root.after(250, self.pump)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-    def load_filters(self):
+    def load_filters(self, saved_json=None):
         try:
-            saved = json.loads(STORE.setting("ui:filters", "{}"))
+            raw = STORE.setting("ui:filters", "{}") if saved_json is None else saved_json
+            saved = json.loads(raw)
             if not isinstance(saved, dict):
                 raise ValueError("Invalid filters")
         except (ValueError, TypeError):
@@ -491,7 +498,8 @@ class App:
         # User explicitly starts the campaign with this button. A second
         # confirmation would defeat one-click operation; permanent risk
         # disclosure remains visible in the main window.
-        previous_searches = STORE.setting("ui:searches")
+        saved_settings = STORE.settings_for(("ui:searches", "run:matching", "ui:browser_channel"))
+        previous_searches = saved_settings.get("ui:searches")
         # An edited search means the old unsent queue may no longer belong to
         # the user's requested audience. Preserve every recorded click and
         # discard only leads that have never been attempted.
@@ -508,7 +516,7 @@ class App:
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
-        matching_changed = STORE.setting("run:matching") != matching_config
+        matching_changed = saved_settings.get("run:matching") != matching_config
         if matching_changed:
             STORE.requeue_filtered()
             if not searches_reset:
@@ -538,7 +546,7 @@ class App:
         self.stop_btn.configure(state="normal")
         config = {"target": target, "daily_limit": daily, "cooldown": cooldown,
                   "searches": searches, "match_terms": matches, "filters": dict(self.filters),
-                  "data_dir": str(APP_DIR), "browser_channel": STORE.setting("ui:browser_channel", "chromium"),
+                  "data_dir": str(APP_DIR), "browser_channel": saved_settings.get("ui:browser_channel", "chromium"),
                   "start_hour": SEND_START_HOUR, "end_hour": SEND_END_HOUR}
         self.worker = threading.Thread(target=self.work, args=(config,), daemon=True)
         self.worker.start()
@@ -553,8 +561,9 @@ class App:
         except StopRun as exc:
             self.emit("status", "Stopped. " + str(exc))
         except Exception as exc:
-            STORE.log("ERROR", safe_diagnostic(exc, 200))
-            self.emit("status", "Error: " + safe_diagnostic(exc, 200) + ". No further requests will be sent.")
+            diagnostic = safe_diagnostic(exc, 200)
+            STORE.log("ERROR", diagnostic)
+            self.emit("status", "Error: " + diagnostic + ". No further requests will be sent.")
         finally:
             self.emit("done")
 

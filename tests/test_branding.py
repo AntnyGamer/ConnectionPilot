@@ -14,7 +14,9 @@ class BrandingTests(unittest.TestCase):
         from storage import Store
         with TemporaryDirectory() as directory:
             store = Store(Path(directory) / "data.sqlite3")
-            self.assertEqual(main.initial_search_inputs(store), ("", ""))
+            with patch.object(store, "_conn", wraps=store._conn) as opened:
+                self.assertEqual(main.initial_search_inputs(store), ("", ""))
+                self.assertEqual(opened.call_count, 1)
             store.set_setting("ui:searches", "government NJ\\npublic policy")
             store.set_setting("ui:matches", "politics, Rowan")
             self.assertEqual(main.initial_search_inputs(store),
@@ -22,6 +24,27 @@ class BrandingTests(unittest.TestCase):
             # Explicitly empty saved values must stay empty.
             store.set_setting("ui:searches", "")
             self.assertEqual(main.initial_search_inputs(store), ("", "politics, Rowan"))
+
+    def test_prefetched_startup_settings_reuse_snapshot_without_more_reads(self):
+        from unittest.mock import MagicMock
+        snapshot = {
+            'ui:target': '150', 'ui:daily': '100', 'ui:cooldown': '90',
+            'ui:searches': 'government\\npublic policy',
+            'ui:matches': 'policy, diplomacy',
+            'ui:filters': '{"degree": "2nd only", "min_score": 50}'
+        }
+        store = MagicMock()
+        with patch.object(store, 'settings_for',
+                          side_effect=AssertionError('Redundant startup read')):
+            self.assertEqual(main.initial_search_inputs(store, snapshot),
+                             ('government\\npublic policy', 'policy, diplomacy'))
+        app = main.App.__new__(main.App)
+        with patch.object(main.STORE, 'setting',
+                          side_effect=AssertionError('Redundant filter read')):
+            filters = app.load_filters(snapshot['ui:filters'])
+        self.assertEqual(filters['degree'], '2nd only')
+        self.assertEqual(filters['min_score'], 50)
+        self.assertEqual(app.load_filters('{}')['degree'], 'Any')
 
     def test_unwritable_app_data_shows_error_without_deleting_data(self):
         import sqlite3
@@ -78,8 +101,12 @@ class BrandingTests(unittest.TestCase):
                          "reset_btn", "pause_btn", "stop_btn"):
                 setattr(app, name, MagicMock())
 
-            with patch("main.STORE", db), patch("main.threading.Thread") as worker:
+            with patch("main.STORE", db), patch("main.threading.Thread") as worker, \
+                 patch.object(db, "settings_for", wraps=db.settings_for) as batched, \
+                 patch.object(db, "setting", side_effect=AssertionError("Per-key read")):
                 app.start()
+                batched.assert_called_once_with(
+                    ("ui:searches", "run:matching", "ui:browser_channel"))
             worker.assert_called_once()
             for term in ("Policy", "government", "policy"):
                 self.assertEqual(db.setting("page:" + term, "1"), "1")
@@ -193,13 +220,13 @@ class BrandingTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/windows-build.yml").read_text()
         win_version = (root / "assets/connectionpilot_version.txt").read_text()
-        self.assertEqual(main.APP_VERSION, "v1.1.0")
-        self.assertIn("filevers=(1, 1, 0, 0)", win_version)
-        self.assertIn("prodvers=(1, 1, 0, 0)", win_version)
-        self.assertEqual(win_version.count("'1.1.0.0'"), 2)
-        self.assertIn("FileVersion -ne '1.1.0.0'", workflow)
-        self.assertIn('TAG="v1.1.0"', workflow)
-        self.assertIn('ConnectionPilot-v1.1.0-Windows-EXE', workflow)
+        self.assertEqual(main.APP_VERSION, "v1.1.1")
+        self.assertIn("filevers=(1, 1, 1, 0)", win_version)
+        self.assertIn("prodvers=(1, 1, 1, 0)", win_version)
+        self.assertEqual(win_version.count("'1.1.1.0'"), 2)
+        self.assertIn("FileVersion -ne '1.1.1.0'", workflow)
+        self.assertIn('TAG="v1.1.1"', workflow)
+        self.assertIn('ConnectionPilot-v1.1.1-Windows-EXE', workflow)
 
     def test_assets_present(self):
         for name in ('connectionpilot.png', 'connectionpilot-header.png',

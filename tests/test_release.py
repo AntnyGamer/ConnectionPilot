@@ -19,6 +19,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('actions/download-artifact@v8', workflow)
         self.assertIn('sha256sum --check', workflow)
         self.assertIn('gh release create', workflow)
+        self.assertIn('Verify public release and all required uploaded assets', workflow)
+        self.assertIn('gh release view "$TAG" --json tagName,isDraft,isPrerelease,assets,url', workflow)
+        self.assertIn('THIRD-PARTY-NOTICES.txt; do', workflow)
+        self.assertIn('Published GitHub release is missing $required', workflow)
         self.assertIn('gh api "repos/$GH_REPO/git/ref/tags/$TAG"', workflow)
         self.assertLess(workflow.index('gh api "repos/$GH_REPO/git/ref/tags/$TAG"'),
                         workflow.index('gh release create'))
