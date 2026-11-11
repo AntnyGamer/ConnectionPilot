@@ -224,6 +224,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Terminal candidates cannot change during discovery. Load them once
     # rather than querying all completed profiles per search phrase.
     processed = store.processed_urls()
+    saved_pages = store.settings_for("page:" + search for search in searches)
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
@@ -231,7 +232,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             return added
         key = "page:" + search
         try:
-            page_no = int(store.setting(key, "1"))
+            page_no = int(saved_pages.get(key, "1"))
         except (TypeError, ValueError, OverflowError):
             page_no = 1
         if page_no < 1:
@@ -849,6 +850,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             searches = unique_phrases(config["searches"])
             match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
+            cursor_keys = ["page:" + term for term in searches]
             discovery_failures = 0
             while not stop_event.is_set():
                 if pause_event.is_set():
@@ -883,7 +885,8 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 profile = store.next_profile()
                 if not profile:
                     notify("Finding new matching professionals…")
-                    before_pages = [store.setting("page:" + term, "1") for term in searches]
+                    before_values = store.settings_for(cursor_keys)
+                    before_pages = [before_values.get(key, "1") for key in cursor_keys]
                     # Once all search cursors exceed the built-in 15-page
                     # ceiling there is no useful retry: discovery would never
                     # visit another result page until searches are changed.
@@ -901,7 +904,8 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                     if pause_event.is_set():
                         continue
                     if not new_count:
-                        after_pages = [store.setting("page:" + term, "1") for term in searches]
+                        after_values = store.settings_for(cursor_keys)
+                        after_pages = [after_values.get(key, "1") for key in cursor_keys]
                         if after_pages != before_pages:
                             # Pages with only previously seen or nonmatching profiles
                             # must not prevent discovery on subsequent result pages.
