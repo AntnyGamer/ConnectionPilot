@@ -74,6 +74,26 @@ class SearchPageBatchTests(unittest.TestCase):
         self.assertEqual(self.store.queued_count(), 0)
         self.assertFalse(self.store.has_attempt(url))
 
+    def test_batch_settings_match_individual_reads_and_use_one_connection(self):
+        values = {"page:policy": "8", "page:government": "1", "ui:daily": "200"}
+        self.store.set_settings(values)
+        requested = ("page:policy", "page:missing", "ui:daily", "page:policy")
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as opened:
+            found = self.store.settings_for(requested)
+            self.assertEqual(opened.call_count, 1)
+        self.assertEqual(found, {"page:policy": "8", "ui:daily": "200"})
+        self.assertEqual(found.get("page:missing", "1"),
+                         self.store.setting("page:missing", "1"))
+        self.assertEqual(self.store.settings_for([]), {})
+
+    def test_many_settings_handle_older_sqlite_parameter_limits(self):
+        values = {f"page:term-{n}": str(n) for n in range(1001)}
+        self.store.set_settings(values)
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as opened:
+            found = self.store.settings_for(values)
+            self.assertEqual(opened.call_count, 1)
+        self.assertEqual(found, values)
+
     def test_single_insert_api_still_returns_boolean(self):
         url = self.root + "single/"
         self.assertIs(self.store.add(url, "Name", "policy", 25), True)
