@@ -703,23 +703,39 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
             if pre_confirm_check is not None and not pre_confirm_check():
                 return "uncertain", "Sending window or daily cap changed before final confirmation; no second click."
             action.click(timeout=7000)
-        # A visible Pending state or a new confirmation needs no fixed wait.
-        # Keep the previous 900ms maximum for asynchronous UI updates.
-        pending = None
-        new_notice = False
+        # LinkedIn can re-render the introduction after the final click.
+        # Refresh the verified profile's action panel instead of relying on
+        # a potentially stale locator. No new phrases or second send clicks.
         sent_notice = page.get_by_text(sent_pattern)
-        for attempt in range(4):
-            pending = find_first_action(header, "Pending")
+        current_header = header
+        for attempt in range(21):
+            if attempt and attempt % 3 == 0 and normalize_profile(page.url) == url:
+                try:
+                    refreshed_header, _ = _profile_intro(page, profile["name"])
+                    if refreshed_header is not None:
+                        current_header = refreshed_header
+                except Exception:
+                    # A transient re-render is not evidence of failure.
+                    pass
+            pending = None
+            if normalize_profile(page.url) == url:
+                try:
+                    pending = find_first_action(current_header, "Pending")
+                except Exception:
+                    # An obsolete header can be replaced at next refresh.
+                    pass
             new_notice = not had_notice and any(
                 node.is_visible() for node in sent_notice.all())
             if pending or new_notice:
-                break
-            if attempt < 3:
+                check_protection(page)
+                return "sent", "Invitation confirmed by LinkedIn UI."
+            if attempt < 20:
                 page.wait_for_timeout(300)
         check_protection(page)
-        if pending or new_notice:
-            return "sent", "Invitation confirmed by LinkedIn UI."
-        return "uncertain", "Clicked invitation action but could not verify sending. Set aside automatically; no retry."
+        return "uncertain", (
+            "Clicked invitation action but could not verify sending after six seconds. "
+            "The invitation may still have been sent; set aside without retrying."
+        )
     except ProtectionScreen:
         raise
     except Exception as exc:
