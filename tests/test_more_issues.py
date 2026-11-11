@@ -86,12 +86,19 @@ class QueueTests(unittest.TestCase):
 
     def test_pause_in_discovery_keeps_page_and_resumes_without_duplicates(self):
         pause = threading.Event()
+        pause_on_first = [True]
 
         class Anchor:
             def __init__(self, slug): self.slug = slug
             def is_visible(self, **kw): return True
             def get_attribute(self, name): return '/in/' + self.slug + '/'
-            def evaluate(self, expression): return 'Public policy analyst working in government and legislation.'
+            def evaluate(self, expression):
+                # Pause while inspecting the first result, before the batch
+                # is persisted; next iteration must notice the pause.
+                if self.slug == 'person-one' and pause_on_first[0]:
+                    pause_on_first[0] = False
+                    pause.set()
+                return 'Public policy analyst working in government and legislation.'
             def inner_text(self, **kw): return self.slug.replace('-', ' ').title()
 
         class Anchors:
@@ -113,16 +120,9 @@ class QueueTests(unittest.TestCase):
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
                 return empty_locator()
 
-        original_add = self.store.add
-        def first_add(*args):
-            result = original_add(*args)
-            pause.set()
-            return result
-
-        with patch.object(self.store, 'add', side_effect=first_add):
-            added = collect_results(Page(), self.store, ['government'], ['policy'],
-                                    threading.Event(), lambda s: None, 200,
-                                    {'min_score':25}, pause)
+        added = collect_results(Page(), self.store, ['government'], ['policy'],
+                                threading.Event(), lambda s: None, 200,
+                                {'min_score':25}, pause)
         self.assertEqual(added, 1)
         self.assertEqual(self.store.setting('page:government', '1'), '1')
         self.assertEqual(self.store.counts().get('queued'), 1)
