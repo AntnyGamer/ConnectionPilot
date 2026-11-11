@@ -78,8 +78,12 @@ class BrandingTests(unittest.TestCase):
                          "reset_btn", "pause_btn", "stop_btn"):
                 setattr(app, name, MagicMock())
 
-            with patch("main.STORE", db), patch("main.threading.Thread") as worker:
+            with patch("main.STORE", db), patch("main.threading.Thread") as worker, \
+                 patch.object(db, "settings_for", wraps=db.settings_for) as batched, \
+                 patch.object(db, "setting", side_effect=AssertionError("Per-key read")):
                 app.start()
+                batched.assert_called_once_with(
+                    ("ui:searches", "run:matching", "ui:browser_channel"))
             worker.assert_called_once()
             for term in ("Policy", "government", "policy"):
                 self.assertEqual(db.setting("page:" + term, "1"), "1")
