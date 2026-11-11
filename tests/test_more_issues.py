@@ -247,6 +247,42 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.setting('page:policy', '1'), '1')
         self.assertIsNone(self.store.setting('page:government'))
         self.assertEqual(self.store.total_attempts(), 0)
+        self.assertEqual(self.store.queued_count(), 0)
+
+    def test_redirect_while_reading_cards_never_queues_unrelated_profiles(self):
+        class Anchor:
+            def __init__(self, page): self.page = page
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/someone/'
+            def inner_text(self, **kwargs): return 'Some One'
+            def evaluate(self, expression):
+                # A late navigation replaces search results while cards are
+                # being inspected. Queued people must belong to that search.
+                self.page.url = 'https://www.linkedin.com/feed/'
+                return 'Policy researcher working in government'
+
+        class Anchors:
+            def __init__(self, page): self.page = page
+            def count(self): return 1
+            def nth(self, index): return Anchor(self.page)
+
+        class Page:
+            def __init__(self):
+                self.url = 'https://www.linkedin.com/search/results/people/'
+            def goto(self, *args, **kwargs): return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors(self)
+                return empty_locator()
+
+        messages = []
+        added = collect_results(Page(), self.store, ['policy'], ['policy'],
+                                threading.Event(), messages.append, 20,
+                                {'min_score':25})
+        self.assertEqual(added, 0)
+        self.assertEqual(self.store.queued_count(), 0)
+        self.assertEqual(self.store.setting('page:policy', '1'), '1')
+        self.assertIn('navigated away during inspection', ' '.join(messages))
 
     def test_generic_action_links_do_not_discard_unread_people(self):
         """Valid profile URLs without names must not be treated as inspected leads."""
