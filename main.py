@@ -108,9 +108,10 @@ MAX_UI_LOG_LINES = 1000
 MAX_UI_EVENTS_PER_TICK = 100
 
 
-def initial_search_inputs(store):
+def initial_search_inputs(store, values=None):
     """Keep existing users' saved terms; leave fresh installations blank."""
-    values = store.settings_for(("ui:searches", "ui:matches"))
+    if values is None:
+        values = store.settings_for(("ui:searches", "ui:matches"))
     return values.get("ui:searches", ""), values.get("ui:matches", "")
 
 
@@ -128,6 +129,10 @@ class App:
         self.signin_process = None
         self.running = False
         self.closing = False
+        # Load every UI preference from one consistent startup query.
+        startup_values = STORE.settings_for((
+            "ui:target", "ui:daily", "ui:cooldown",
+            "ui:searches", "ui:matches", "ui:filters"))
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -181,13 +186,13 @@ class App:
         top = ttk.Frame(panel, style="Card.TFrame")
         top.pack(fill="x")
         ttk.Label(top, text="Invitation goal", style="Card.TLabel").grid(row=0, column=0, sticky="w")
-        self.target = tk.IntVar(value=safe_saved_int(STORE.setting("ui:target", "200"), 200, 1, 5000))
+        self.target = tk.IntVar(value=safe_saved_int(startup_values.get("ui:target", "200"), 200, 1, 5000))
         ttk.Spinbox(top, textvariable=self.target, from_=1, to=5000, width=8).grid(row=1, column=0, sticky="w", pady=(3, 10))
         ttk.Label(top, text="Daily invitation cap", style="Card.TLabel").grid(row=0, column=1, sticky="w", padx=(25, 0))
-        self.daily = tk.IntVar(value=safe_saved_int(STORE.setting("ui:daily", "500"), 500, 1, 500))
+        self.daily = tk.IntVar(value=safe_saved_int(startup_values.get("ui:daily", "500"), 500, 1, 500))
         ttk.Spinbox(top, textvariable=self.daily, from_=1, to=500, width=8).grid(row=1, column=1, sticky="w", padx=(25, 0), pady=(3, 10))
         ttk.Label(top, text="Cooldown (seconds)", style="Card.TLabel").grid(row=0, column=2, sticky="w", padx=(25, 0))
-        saved_cooldown = STORE.setting("ui:cooldown", "90")
+        saved_cooldown = startup_values.get("ui:cooldown", "90")
         self.cooldown = tk.DoubleVar(value=float(saved_cooldown) if valid_cooldown_seconds(saved_cooldown) else 90.0)
         ttk.Spinbox(top, textvariable=self.cooldown, from_=MIN_COOLDOWN_SECONDS,
                     to=MAX_COOLDOWN_SECONDS, increment=0.1, format="%.1f", width=10).grid(row=1, column=2, sticky="w", padx=(25, 0), pady=(3, 10))
@@ -197,7 +202,7 @@ class App:
         self.search_box = tk.Text(panel, height=5, bg="#fbfdff", fg=COLORS["ink"],
                                   font=("Segoe UI", 9), relief="solid", bd=1, wrap="word")
         self.search_box.pack(fill="x", pady=(4, 10))
-        saved_searches, saved_matches = initial_search_inputs(STORE)
+        saved_searches, saved_matches = initial_search_inputs(STORE, startup_values)
         self.search_box.insert("1.0", saved_searches)
 
         ttk.Label(panel, text="Relevant profile terms (comma-separated)", style="Card.TLabel").pack(anchor="w")
@@ -206,7 +211,7 @@ class App:
         self.match_box.pack(fill="x", pady=(4, 8))
         self.match_box.insert("1.0", saved_matches)
 
-        self.filters = self.load_filters()
+        self.filters = self.load_filters(startup_values.get("ui:filters", "{}"))
         filter_row = ttk.Frame(panel, style="Card.TFrame")
         filter_row.pack(fill="x", pady=(0, 8))
         ttk.Button(filter_row, text="Advanced filters…", command=self.edit_filters).pack(side="left")
@@ -268,9 +273,10 @@ class App:
         self.root.after(250, self.pump)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-    def load_filters(self):
+    def load_filters(self, saved_json=None):
         try:
-            saved = json.loads(STORE.setting("ui:filters", "{}"))
+            raw = STORE.setting("ui:filters", "{}") if saved_json is None else saved_json
+            saved = json.loads(raw)
             if not isinstance(saved, dict):
                 raise ValueError("Invalid filters")
         except (ValueError, TypeError):
