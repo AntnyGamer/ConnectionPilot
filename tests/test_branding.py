@@ -25,6 +25,27 @@ class BrandingTests(unittest.TestCase):
             store.set_setting("ui:searches", "")
             self.assertEqual(main.initial_search_inputs(store), ("", "politics, Rowan"))
 
+    def test_prefetched_startup_settings_reuse_snapshot_without_more_reads(self):
+        from unittest.mock import MagicMock
+        snapshot = {
+            'ui:target': '150', 'ui:daily': '100', 'ui:cooldown': '90',
+            'ui:searches': 'government\\npublic policy',
+            'ui:matches': 'policy, diplomacy',
+            'ui:filters': '{"degree": "2nd only", "min_score": 50}'
+        }
+        store = MagicMock()
+        with patch.object(store, 'settings_for',
+                          side_effect=AssertionError('Redundant startup read')):
+            self.assertEqual(main.initial_search_inputs(store, snapshot),
+                             ('government\\npublic policy', 'policy, diplomacy'))
+        app = main.App.__new__(main.App)
+        with patch.object(main.STORE, 'setting',
+                          side_effect=AssertionError('Redundant filter read')):
+            filters = app.load_filters(snapshot['ui:filters'])
+        self.assertEqual(filters['degree'], '2nd only')
+        self.assertEqual(filters['min_score'], 50)
+        self.assertEqual(app.load_filters('{}')['degree'], 'Any')
+
     def test_unwritable_app_data_shows_error_without_deleting_data(self):
         import sqlite3
         from tempfile import TemporaryDirectory
