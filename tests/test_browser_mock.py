@@ -1148,6 +1148,19 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'uncertain')
         self.assertIn('could not verify', reason)
 
+    def test_new_confirmation_beside_existing_notice_is_detected(self):
+        # An old visible confirmation must not mask a separate fresh one.
+        # No Pending button or new wording is required as evidence.
+        doc = html("""<button id="c" onclick="
+            this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1);
+            document.querySelector('#notices').insertAdjacentHTML(
+                'beforeend', '<p>Invitation sent</p>')">Connect</button>
+            <div id="notices"><p>Invitation sent</p></div>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#c').get_attribute('data-clicks'), '1')
+        self.assertEqual(self.page.locator('#notices p').count(), 2)
+
     def test_invisible_extra_dialog_does_not_block_send(self):
         doc = html('''<button id="c" onclick="document.getElementById('d').hidden=false">Connect</button>''', '''<div role="dialog" id="d" hidden><button onclick="document.querySelector('#c').textContent='Pending'; document.querySelector('#d').hidden=true">Send without a note</button></div><div role="dialog" hidden><button>Unrelated</button></div>''')
         result, _ = self.run_mock(doc)
