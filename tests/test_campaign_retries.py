@@ -133,6 +133,26 @@ class WorkerRecoveryTests(unittest.TestCase):
             'page:political science', 'page:government', 'page:public policy'])
         individual.assert_not_called()
 
+    def test_worker_uses_combined_pacing_snapshot_including_preclick(self):
+        url = 'https://www.linkedin.com/in/pacing-worker/'
+        self.store.add(url, 'Pacing Worker', 'policy', 25)
+
+        def stop_after_preclick(*args):
+            # The pre-click callback is the ninth positional argument.
+            self.assertTrue(args[8]())
+            raise StopRun('checked')
+
+        with patch.object(self.store, 'pacing_state',
+                          wraps=self.store.pacing_state) as snapshot, \
+             patch.object(self.store, 'attempts_today',
+                          side_effect=AssertionError('Separate count query')), \
+             patch.object(self.store, 'last_attempt_at',
+                          side_effect=AssertionError('Separate latest query')), \
+             patch('automation.send_one', side_effect=stop_after_preclick):
+            self.run_fake()
+        self.assertEqual(snapshot.call_count, 2)
+        self.assertFalse(self.store.has_attempt(url))
+
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
         # The app must explicitly enable browser sandboxing on Windows.
