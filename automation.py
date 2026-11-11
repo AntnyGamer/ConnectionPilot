@@ -861,6 +861,17 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 if not profile:
                     notify("Finding new matching professionals…")
                     before_pages = [store.setting("page:" + term, "1") for term in searches]
+                    # Once all search cursors exceed the built-in 15-page
+                    # ceiling there is no useful retry: discovery would never
+                    # visit another result page until searches are changed.
+                    def exhausted_cursor(value):
+                        try:
+                            return int(value) > 15
+                        except (TypeError, ValueError, OverflowError):
+                            return False
+                    if searches and all(exhausted_cursor(value) for value in before_pages):
+                        raise StopRun("All searches reached the 15-page discovery limit. "
+                                      "Add or change search phrases to restart discovery.")
                     new_count = collect_results(page, store, searches, match_terms, stop_event, notify,
                                                 config["target"], filters, pause_event)
                     on_update()
