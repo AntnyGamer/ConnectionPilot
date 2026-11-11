@@ -1120,6 +1120,42 @@ class BrowserMockTests(unittest.TestCase):
         result, _ = self.run_mock(html('<button>Pending</button>'))
         self.assertEqual(result, 'skipped')
 
+    def test_profile_navigation_timeout_checks_late_account_warning(self):
+        doc = html('<div role="alert">Invitation limit reached</div>')
+
+        class TimedOutPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+                raise TimeoutError('Navigation timed out')
+            def __getattr__(self, key): return getattr(self.page, key)
+
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        with self.assertRaises(ProtectionScreen):
+            send_one(TimedOutPage(self.page),
+                     {'url': MOCK_URL, 'name': 'Test Example'},
+                     self.db, lambda _: None)
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+
+    def test_profile_navigation_timeout_without_warning_remains_recoverable(self):
+        doc = html('<p>Normal member details</p>')
+
+        class TimedOutPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs):
+                self.page.set_content(doc)
+                raise TimeoutError('Navigation timed out')
+            def __getattr__(self, key): return getattr(self.page, key)
+
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        with self.assertRaises(TimeoutError):
+            send_one(TimedOutPage(self.page),
+                     {'url': MOCK_URL, 'name': 'Test Example'},
+                     self.db, lambda _: None)
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+
     def test_warning_after_click_preserves_uncertain_status(self):
         self.db.add(MOCK_URL, 'Test Example', 'politics', 25)
         doc = html("""<button onclick="document.body.insertAdjacentHTML('beforeend','<p>Invitation limit reached</p>')">Connect</button>""")
