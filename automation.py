@@ -423,6 +423,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         elif valid_profile_links:
             # Every nonprocessed link is named, or all links were processed.
             store.set_setting(key, page_no + 1)
+            # Keep the prefetched snapshot in sync if a caller repeats a
+            # search phrase in one discovery pass.
+            saved_pages[key] = str(page_no + 1)
         else:
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
         notify(f"Queued {added} new matches this pass.")
