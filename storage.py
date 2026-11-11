@@ -269,7 +269,14 @@ class Store:
         start, end = self._today_bounds()
         with self._conn() as db:
             db.execute("BEGIN")  # Keep all counters in one read transaction.
-            rows = db.execute("SELECT status, count(*) FROM profiles GROUP BY status").fetchall()
+            # The displayed queue is the *sendable* queue, not every row
+            # still labeled queued in a legacy/stale state. Attempt history
+            # always wins over a profile's mutable status.
+            rows = db.execute("""SELECT status, count(*) FROM profiles
+                WHERE status != 'queued'
+                   OR NOT EXISTS (SELECT 1 FROM attempts
+                                  WHERE attempts.url=profiles.url)
+                GROUP BY status""").fetchall()
             counts = {row[0]: row[1] for row in rows}
             total = db.execute("SELECT count(*) FROM attempts").fetchone()[0]
             possible, confirmed = db.execute("""SELECT count(*),
