@@ -287,6 +287,37 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.setting('page:policy', '1'), '1')
         self.assertIn('navigated away during inspection', ' '.join(messages))
 
+    def test_repeated_search_phrase_still_advances_cursor_each_time(self):
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/same-person/'
+            def inner_text(self, **kwargs): return 'Same Person'
+            def evaluate(self, expression): return 'Public policy analyst'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, index): return Anchor()
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.visited = []
+            def goto(self, url, **kwargs):
+                self.visited.append(url)
+                return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return empty_locator()
+
+        page = Page()
+        added = collect_results(page, self.store, ['policy', 'policy'], ['policy'],
+                                threading.Event(), lambda _: None, 200,
+                                {'min_score':25})
+        self.assertEqual(added, 1)
+        self.assertEqual(self.store.setting('page:policy'), '3')
+        self.assertIn('page=1', page.visited[0])
+        self.assertIn('page=2', page.visited[1])
+
     def test_generic_action_links_do_not_discard_unread_people(self):
         """Valid profile URLs without names must not be treated as inspected leads."""
         class ActionLink:
