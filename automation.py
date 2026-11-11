@@ -293,8 +293,13 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
         paused_during_page = False
+        candidates = []
         for i in range(anchor_count):
             if stop_event.is_set():
+                # Keep candidates discovered before Stop, just as per-row
+                # inserts did; the page cursor still remains unchanged.
+                if candidates:
+                    added += store.add_many(candidates)
                 raise StopRun()
             if pause_event is not None and pause_event.is_set():
                 paused_during_page = True
@@ -370,13 +375,18 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     if any(term in folded_snippet for term in exclusions):
                         continue
                 seen_this_page.add(url)
-                if store.add(url, name, snippet, score):
-                    added += 1
+                # Avoid opening a new SQLite connection for every profile
+                # link. A batch uses the same insert/update rules as add().
+                candidates.append((url, name, snippet, score))
             except Exception:
                 # Retain the current page number: otherwise a temporary DOM or
                 # database error can silently discard people we never examined.
                 extraction_errors += 1
                 continue
+        if candidates:
+            # Commit even on a partially scanned page so Pause and Stop
+            # preserve all candidates already inspected.
+            added += store.add_many(candidates)
         if paused_during_page:
             # Keep this page pending: already collected leads are deduplicated
             # and the rest can be inspected safely after Resume.
