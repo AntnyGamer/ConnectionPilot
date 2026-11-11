@@ -484,9 +484,12 @@ class BrowserMockTests(unittest.TestCase):
     def test_failed_navigation_keeps_candidate_queued(self):
         self.db.add(MOCK_URL, 'Test Example', 'public policy', 25)
         class BadPage:
+            url = MOCK_URL
+            def __init__(self, page): self.page = page
             def goto(self, *args, **kwargs): raise TimeoutError('navigation timeout')
+            def __getattr__(self, key): return getattr(self.page, key)
         with self.assertRaises(TimeoutError):
-            send_one(BadPage(), {'url': MOCK_URL, 'name': 'Test Example'},
+            send_one(BadPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
                      self.db, lambda _: None)
         self.assertEqual(self.db.next_profile()['url'], MOCK_URL)
 
