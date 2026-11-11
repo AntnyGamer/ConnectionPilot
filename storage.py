@@ -58,21 +58,33 @@ class Store:
         return datetime.now(TZ).isoformat()
 
     def add(self, url, name, headline, score):
-        now = self._now()
+        """Insert or update one candidate; retain the original public API."""
+        return bool(self.add_many(((url, name, headline, score),)))
+
+    def add_many(self, candidates):
+        """Persist a search-page batch in one transaction, preserving add() semantics.
+
+        Duplicates update only an unattempted queued candidate's best score.
+        Recorded clicks, status, identity, and discovery order are immutable.
+        """
+        added = 0
         with self._conn() as db:
-            cur = db.execute("""INSERT OR IGNORE INTO profiles
-                (url, name, headline, score, discovered_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)""", (url, name[:120], headline[:500], score, now, now))
-            if cur.rowcount:
-                return True
-            # The same person may appear in several searches. Keep the best
-            # relevance score for unsent leads without changing their identity,
-            # status, discovery order, or any recorded invitation attempt.
-            db.execute("""UPDATE profiles SET score=?, headline=?, updated_at=?
-                WHERE url=? AND status='queued' AND score < ?
-                  AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.url=profiles.url)""",
-                       (score, headline[:500], now, url, score))
-            return False
+            for url, name, headline, score in candidates:
+                now = self._now()
+                cur = db.execute("""INSERT OR IGNORE INTO profiles
+                    (url, name, headline, score, discovered_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (url, name[:120], headline[:500], score, now, now))
+                if cur.rowcount:
+                    added += 1
+                    continue
+                db.execute("""UPDATE profiles SET score=?, headline=?, updated_at=?
+                    WHERE url=? AND status='queued' AND score < ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM attempts WHERE attempts.url=profiles.url
+                      )""",
+                    (score, headline[:500], now, url, score))
+        return added
 
     def processed_urls(self):
         """Previously completed people should not be read from search cards again.
