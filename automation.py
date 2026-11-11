@@ -760,10 +760,10 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     # the immutable click ledger locally before launching any browser.
     attempted = store.total_attempts()
     if attempted >= config["target"]:
-        counts = store.counts()
-        notify(f"Goal reached: {attempted} total invitation attempt(s), including "
-               f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
-               "unconfirmed. Some clicks may have been rejected by LinkedIn.")
+        total, confirmed, unconfirmed = store.attempt_outcomes()
+        notify(f"Goal reached: {total} total invitation attempt(s), including "
+               f"{confirmed} confirmed and {unconfirmed} not confirmed. "
+               "Some clicks may have been rejected by LinkedIn.")
         on_update()
         return
     try:
@@ -833,12 +833,12 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                     continue
                 attempted = store.total_attempts()
                 if attempted >= config["target"]:
-                    # Reading grouped profile counts is unnecessary on every
-                    # idle/active worker iteration; only goal reporting uses it.
-                    counts = store.counts()
-                    notify(f"Goal reached: {attempted} total invitation attempt(s), including "
-                           f"{counts.get('sent', 0)} confirmed and {counts.get('uncertain', 0)} "
-                           "unconfirmed. Some clicks may have been rejected by LinkedIn.")
+                    # Goal reporting must use the click ledger, not profile
+                    # statuses: a potential click can later become "skipped".
+                    total, confirmed, unconfirmed = store.attempt_outcomes()
+                    notify(f"Goal reached: {total} total invitation attempt(s), including "
+                           f"{confirmed} confirmed and {unconfirmed} not confirmed. "
+                           "Some clicks may have been rejected by LinkedIn.")
                     return
                 now = local_now()
                 if not in_work_hours(now, config["start_hour"], config["end_hour"]):
