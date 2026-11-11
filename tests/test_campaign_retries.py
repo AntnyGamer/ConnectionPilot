@@ -104,6 +104,18 @@ class WorkerRecoveryTests(unittest.TestCase):
         queued.assert_called_once()
         self.assertEqual(self.store.counts().get("queued"), 1)
 
+    def test_worker_reads_all_search_cursors_in_one_batch(self):
+        self.config['searches'] = ['political science', 'government', 'public policy']
+        with patch.object(self.store, 'settings_for',
+                          wraps=self.store.settings_for) as batch, \
+             patch.object(self.store, 'setting',
+                          side_effect=AssertionError('Per-key read')) as individual, \
+             patch('automation.collect_results', side_effect=StopRun('done')):
+            self.run_fake()
+        batch.assert_called_once_with([
+            'page:political science', 'page:government', 'page:public policy'])
+        individual.assert_not_called()
+
     def test_campaign_uses_chromium_sandbox(self):
         # Playwright defaults to --no-sandbox, even for real Chrome/Edge.
         # The app must explicitly enable browser sandboxing on Windows.
