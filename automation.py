@@ -776,6 +776,14 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
         return "uncertain", "UI error after click: " + safe_diagnostic(exc, 180)
 
 
+def _goal_progress_message(store):
+    """Format completed-goal status consistently from the attempt ledger."""
+    total, confirmed, unconfirmed = store.attempt_outcomes()
+    return (f"Goal reached: {total} total invitation attempt(s), including "
+            f"{confirmed} confirmed and {unconfirmed} not confirmed. "
+            "Some clicks may have been rejected by LinkedIn.")
+
+
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
     """Run in a background thread. One click launches one visible browser session."""
     if stop_event.is_set():
@@ -784,10 +792,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     # the immutable click ledger locally before launching any browser.
     attempted = store.total_attempts()
     if attempted >= config["target"]:
-        total, confirmed, unconfirmed = store.attempt_outcomes()
-        notify(f"Goal reached: {total} total invitation attempt(s), including "
-               f"{confirmed} confirmed and {unconfirmed} not confirmed. "
-               "Some clicks may have been rejected by LinkedIn.")
+        notify(_goal_progress_message(store))
         on_update()
         return
     try:
@@ -860,10 +865,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 if attempted >= config["target"]:
                     # Goal reporting must use the click ledger, not profile
                     # statuses: a potential click can later become "skipped".
-                    total, confirmed, unconfirmed = store.attempt_outcomes()
-                    notify(f"Goal reached: {total} total invitation attempt(s), including "
-                           f"{confirmed} confirmed and {unconfirmed} not confirmed. "
-                           "Some clicks may have been rejected by LinkedIn.")
+                    notify(_goal_progress_message(store))
                     return
                 now = local_now()
                 if not in_work_hours(now, config["start_hour"], config["end_hour"]):
