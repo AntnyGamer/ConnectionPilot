@@ -204,6 +204,50 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.setting('page:policy'), '2')
         self.assertEqual(self.store.queued_count(), 2)
 
+    def test_warning_appearing_during_discovery_stops_before_next_search(self):
+        # A restriction warning may appear after the initial protection checks
+        # as the search result cards are hydrated/read.
+        from automation import ProtectionScreen
+
+        class Alert:
+            def is_visible(self): return True
+            def evaluate(self, expression): return False
+            def inner_text(self, **kw): return 'Invitation limit reached'
+            def get_attribute(self, name): return 'alert'
+
+        class Anchor:
+            def __init__(self, page): self.page = page
+            def is_visible(self, **kw): return True
+            def get_attribute(self, key): return '/in/person-one/'
+            def inner_text(self, **kw): return 'Person One'
+            def evaluate(self, expression):
+                self.page.warning = True
+                return 'Government policy analyst'
+
+        class Anchors:
+            def __init__(self, page): self.page = page
+            def count(self): return 1
+            def nth(self, index): return Anchor(self.page)
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.warning = False
+            def goto(self, *args, **kwargs): return None
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors(self)
+                if selector.startswith('[role="alert"],'):
+                    return SimpleNamespace(all=lambda: [Alert()] if self.warning else [])
+                return empty_locator()
+
+        with self.assertRaises(ProtectionScreen):
+            collect_results(Page(), self.store, ['policy', 'government'], ['policy'],
+                            threading.Event(), lambda _: None, 200,
+                            {'min_score':25})
+        self.assertEqual(self.store.setting('page:policy', '1'), '1')
+        self.assertIsNone(self.store.setting('page:government'))
+        self.assertEqual(self.store.total_attempts(), 0)
+
     def test_generic_action_links_do_not_discard_unread_people(self):
         """Valid profile URLs without names must not be treated as inspected leads."""
         class ActionLink:
