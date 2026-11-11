@@ -395,7 +395,18 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # different, unnamed new member. Multiple links to a single person
         # are fine once any one link supplies that person's actual name.
         unnamed_new_links = valid_profile_links - processed - named_profile_links
-        if extraction_errors:
+        # LinkedIn may append or replace cards after the first result appears.
+        # Never mark a page as fully inspected if its link list changed
+        # while we were reading the initial snapshot.
+        result_list_changed = anchors.count() != anchor_count
+        if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
+            check_protection(page)
+            notify(f"Results for '{search}' navigated away during inspection; "
+                   f"retaining page {page_no}.")
+        elif result_list_changed:
+            notify(f"Results for '{search}' changed during inspection; "
+                   f"retaining page {page_no} to inspect newly loaded profiles.")
+        elif extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
         elif unnamed_new_links:
