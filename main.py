@@ -110,7 +110,8 @@ MAX_UI_EVENTS_PER_TICK = 100
 
 def initial_search_inputs(store):
     """Keep existing users' saved terms; leave fresh installations blank."""
-    return store.setting("ui:searches", ""), store.setting("ui:matches", "")
+    values = store.settings_for(("ui:searches", "ui:matches"))
+    return values.get("ui:searches", ""), values.get("ui:matches", "")
 
 
 class App:
