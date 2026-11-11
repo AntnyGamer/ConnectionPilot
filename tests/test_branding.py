@@ -14,7 +14,9 @@ class BrandingTests(unittest.TestCase):
         from storage import Store
         with TemporaryDirectory() as directory:
             store = Store(Path(directory) / "data.sqlite3")
-            self.assertEqual(main.initial_search_inputs(store), ("", ""))
+            with patch.object(store, "_conn", wraps=store._conn) as opened:
+                self.assertEqual(main.initial_search_inputs(store), ("", ""))
+                self.assertEqual(opened.call_count, 1)
             store.set_setting("ui:searches", "government NJ\\npublic policy")
             store.set_setting("ui:matches", "politics, Rowan")
             self.assertEqual(main.initial_search_inputs(store),
