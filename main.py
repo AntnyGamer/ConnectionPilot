@@ -554,8 +554,9 @@ class App:
         except StopRun as exc:
             self.emit("status", "Stopped. " + str(exc))
         except Exception as exc:
-            STORE.log("ERROR", safe_diagnostic(exc, 200))
-            self.emit("status", "Error: " + safe_diagnostic(exc, 200) + ". No further requests will be sent.")
+            diagnostic = safe_diagnostic(exc, 200)
+            STORE.log("ERROR", diagnostic)
+            self.emit("status", "Error: " + diagnostic + ". No further requests will be sent.")
         finally:
             self.emit("done")
 
