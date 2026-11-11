@@ -736,8 +736,11 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
                 except Exception:
                     # An obsolete header can be replaced at next refresh.
                     pass
-            new_notice = sum(
-                node.is_visible() for node in sent_notice.all()) > previous_notice_count
+            # Keep the common no-previous-notice path short-circuiting,
+            # while still detecting additional notices beside existing ones.
+            visible_notices = (node.is_visible() for node in sent_notice.all())
+            new_notice = (sum(visible_notices) > previous_notice_count
+                          if previous_notice_count else any(visible_notices))
             if pending or new_notice:
                 check_protection(page)
                 return "sent", "Invitation confirmed by LinkedIn UI."
