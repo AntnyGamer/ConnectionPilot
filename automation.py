@@ -224,7 +224,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Terminal candidates cannot change during discovery. Load them once
     # rather than querying all completed profiles per search phrase.
     processed = store.processed_urls()
-    saved_pages = store.settings_for("page:" + search for search in searches)
+    saved_pages = store.settings_for(["page:" + search for search in searches])
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
