@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from storage import Store
 from logic import _normalized_score_terms
-from automation import ProtectionScreen, check_protection, collect_results, send_one
+from automation import ProtectionScreen, StopRun, check_protection, collect_results, send_one
 
 try:
     from playwright.sync_api import sync_playwright
@@ -1345,6 +1345,68 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'deferred')
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
         self.assertEqual(self.db.attempts_today(), 0)
+
+    def test_pause_arriving_during_preclick_guard_leaves_candidate_queued(self):
+        pause = threading.Event()
+        doc = html('<button id="c" onclick="this.textContent=\'Pending\'">Connect</button>')
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        def check():
+            pause.set()
+            return True
+        result, reason = send_one(
+            LocalPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None, pause_event=pause, pre_click_check=check)
+        self.assertEqual(result, 'paused', reason)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+        self.assertEqual(self.db.next_profile()['url'], MOCK_URL)
+
+    def test_stop_arriving_during_preclick_guard_never_clicks(self):
+        stop = threading.Event()
+        doc = html('<button id="c" onclick="this.textContent=\'Pending\'">Connect</button>')
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        def check():
+            stop.set()
+            return True
+        with self.assertRaises(StopRun):
+            send_one(LocalPage(self.page),
+                     {'url': MOCK_URL, 'name': 'Test Example'}, self.db,
+                     lambda _: None, stop_event=stop, pre_click_check=check)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
+        self.assertFalse(self.db.has_attempt(MOCK_URL))
+
+    def test_stop_arriving_during_confirmation_guard_blocks_final_click(self):
+        stop = threading.Event()
+        doc = html("<button id='c' onclick=\"document.getElementById('d').hidden=false\">Connect</button>", """
+            <div role='dialog' id='d' hidden><button id='final'
+            onclick="document.querySelector('#c').textContent='Pending'">Send without a note</button></div>""")
+        class LocalPage:
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key):
+                return MOCK_URL if key == "url" else getattr(self.page, key)
+        self.db.add(MOCK_URL, 'Test Example', 'policy', 25)
+        def confirmation_check():
+            stop.set()
+            return True
+        result, reason = send_one(
+            LocalPage(self.page), {'url': MOCK_URL, 'name': 'Test Example'},
+            self.db, lambda _: None, stop_event=stop,
+            pre_confirm_check=confirmation_check)
+        self.assertEqual(result, 'uncertain', reason)
+        self.assertIn('interrupted', reason)
+        self.assertEqual(self.page.locator('#c').inner_text(), 'Connect')
+        self.assertTrue(self.db.has_attempt(MOCK_URL))
 
     def test_pause_at_confirmation_dialog_prevents_final_send(self):
         pause = threading.Event()
