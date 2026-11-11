@@ -584,7 +584,15 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     """Return sent/skipped/uncertain; never retry a potentially successful invitation."""
     url = profile["url"]
     notify("Checking " + profile["name"] + " …")
-    response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    try:
+        response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    except (PlaywrightTimeoutError, TimeoutError):
+        # Search timeouts already check for a late account warning. Apply
+        # the same protection to profile timeouts before the worker considers
+        # an unclicked candidate a recoverable skip.
+        check_protection(page)
+        raise
     reject_denied_page(response)
     # Avoid a fixed per-profile delay. If LinkedIn is still rendering the
     # verified introduction, retry the safe inspection without clicking.
