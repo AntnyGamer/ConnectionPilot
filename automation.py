@@ -405,6 +405,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   let best = (el.innerText || '').trim();
                   for (let n = el.parentElement, j = 0; n && j < 6;
                        n = n.parentElement, j++) {
+                    // Search-page headings and filters aren't evidence about
+                    // this person, even on a one-result search page.
+                    if (n.matches('main, [role="main"]')) break;
                     const people = n.querySelectorAll('a[href*="/in/"]');
                     if (Array.from(people).some(a => key(a) !== own)) break;
                     const t = (n.innerText || '').trim();
