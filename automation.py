@@ -391,6 +391,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 }""") or ""
                 if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
                     first_degree_links.add(url)
+                    # Relationship is definitive for this profile URL.
+                    # Other anchors for the same URL need no DOM inspection.
+                    seen_this_page.add(url)
                     continue
                 # Search cards that explicitly say 3rd degree can be
                 # excluded when a 2nd-only filter is enabled. Unspecified
@@ -399,6 +402,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                         and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
                                       snippet, re.I)):
                     degree_filtered_links.add(url)
+                    # An explicitly disallowed connection degree is likewise
+                    # definitive; ignore duplicate anchors for this profile.
+                    seen_this_page.add(url)
                     continue
                 score = _match_score_prepared(snippet, score_terms)
                 if minimum_score is None:
