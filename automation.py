@@ -395,10 +395,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             if paused_during_page:
                 return added
             continue
+        added_this_search = 0
         if candidates:
             # Commit even on a partially scanned page so Pause and Stop
             # preserve candidates already inspected on the search page.
-            added += store.add_many(candidates)
+            added_this_search = store.add_many(candidates)
+            added += added_this_search
         if paused_during_page:
             # Keep this page pending: already collected leads are deduplicated
             # and the rest can be inspected safely after Resume.
@@ -407,13 +409,28 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         # different, unnamed new member. Multiple links to a single person
         # are fine once any one link supplies that person's actual name.
         unnamed_new_links = valid_profile_links - processed - named_profile_links
-        # LinkedIn may append or replace cards after the first result appears.
-        # Never mark a page as fully inspected if its link list changed
-        # while we were reading the initial snapshot.
-        result_list_changed = anchors.count() != anchor_count
+        # LinkedIn frequently duplicates or re-renders links during hydration.
+        # A raw anchor-count change is NOT a new person and used to trap
+        # searches on the same page indefinitely. Compare normalized, visible
+        # profile URLs instead, so only genuinely uninspected people keep
+        # the cursor on the current page.
+        try:
+            final_urls = {
+                normalized
+                for href in anchors.evaluate_all("""nodes => nodes
+                  .filter(a => a.getClientRects().length > 0 &&
+                               getComputedStyle(a).visibility !== 'hidden')
+                  .map(a => a.getAttribute('href') || '')""")
+                if (normalized := normalize_profile(href))
+            }
+        except Exception:
+            # If the final snapshot cannot be verified, don't falsely
+            # conclude that all visible members were inspected.
+            final_urls = None
+        result_list_changed = final_urls is None or bool(final_urls - valid_profile_links)
         if result_list_changed:
-            notify(f"Results for '{search}' changed during inspection; "
-                   f"retaining page {page_no} to inspect newly loaded profiles.")
+            notify(f"New profile links appeared (or verification failed) for '{search}' "
+                   f"during inspection; retaining page {page_no} for another pass.")
         elif extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
@@ -428,7 +445,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             saved_pages[key] = str(page_no + 1)
         else:
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
-        notify(f"Queued {added} new matches this pass.")
+        notify(f"Queued {added_this_search} new matches for '{search}' on page {page_no} "
+               f"({added} total this pass; {len(valid_profile_links)} distinct visible profile links).")
         # Stop once we have enough to process for the current day; later passes discover more.
         if store.queued_count() >= min(30, target):
             break
