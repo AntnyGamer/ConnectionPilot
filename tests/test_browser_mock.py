@@ -505,6 +505,55 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(added, 0)
         self.assertEqual(self.db.setting('page:political science'), '2')
 
+    def test_duplicate_link_count_change_does_not_stall_search_cursor(self):
+        # LinkedIn can add a second link to the same member while hydrating.
+        # A count change alone must not trap discovery on this page.
+        doc = """<html><body><main><div>
+          <a href='/in/jane-example/'>Jane Example</a>
+          <p>Government public policy analyst in New Jersey</p>
+          </div></main></body></html>"""
+
+        class ChangingCountAnchors:
+            def __init__(self, anchors):
+                self.anchors = anchors
+                self.calls = 0
+
+            def count(self):
+                self.calls += 1
+                return self.anchors.count() + (1 if self.calls > 1 else 0)
+
+            def nth(self, index):
+                return self.anchors.nth(index)
+
+            def evaluate_all(self, script):
+                return self.anchors.evaluate_all(script)
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+                self.anchors = None
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def locator(self, selector):
+                result = self.browser.locator(selector)
+                if selector == 'main a[href*="/in/"]':
+                    if self.anchors is None:
+                        self.anchors = ChangingCountAnchors(result)
+                    return self.anchors
+                return result
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 1)
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
     def test_generic_link_does_not_mask_valid_name_for_same_profile(self):
         doc = """<html><body><main>
           <div><a href='/in/jane-example/'>View profile</a>
