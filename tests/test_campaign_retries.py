@@ -162,6 +162,18 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.assertIsNone(self.store.setting('page:public policy'))
         self.assertEqual(self.store.queued_count(), 1)
 
+    def test_invalid_match_score_stops_without_visiting_linkedin(self):
+        for invalid in ("not a number", -1, 101, None):
+            with self.subTest(invalid=invalid):
+                self.page.goto.reset_mock()
+                with self.assertRaises(ValueError):
+                    collect_results(
+                        self.page, self.store, ['political science'], ['policy'],
+                        self.stop, self.status.append, 10,
+                        {'min_score': invalid})
+                self.page.goto.assert_not_called()
+                self.assertIsNone(self.store.setting('page:political science'))
+
     def test_discovery_at_target_does_not_open_any_search_page(self):
         url = 'https://www.linkedin.com/in/already-at-goal/'
         self.store.add(url, 'Already At Goal', 'government policy', 25)
