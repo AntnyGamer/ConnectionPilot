@@ -310,9 +310,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         degree_filtered_links = set()
         score_filtered_links = set()
         excluded_links = set()
-        # Scan the *entire* displayed results page rather than silently
-        # discarding links past an arbitrary first-80 cutoff.
-        paused_during_page = False
+        # Finish inspecting the already-loaded page before honoring Pause.
+        # Abandoning it mid-scan would force a duplicate page navigation on
+        # Resume; no invitations occur during discovery.
         candidates = []
         for i in range(anchor_count):
             if stop_event.is_set():
@@ -322,9 +322,6 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                         urlsplit(page.url).path.rstrip("/").casefold() == "/search/results/people"):
                     added += store.add_many(candidates)
                 raise StopRun()
-            if pause_event is not None and pause_event.is_set():
-                paused_during_page = True
-                break
             anchor = anchors.nth(i)
             try:
                 if not anchor.is_visible(timeout=1000):
@@ -422,7 +419,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
             notify(f"Results for '{search}' navigated away during inspection; "
                    f"deferring page {page_no} without saving unrelated profiles.")
-            if paused_during_page:
+            if pause_event is not None and pause_event.is_set():
                 return added
             if deferred_searches is not None:
                 deferred_searches.add(search)
@@ -433,10 +430,6 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # preserve candidates already inspected on the search page.
             added_this_search = store.add_many(candidates)
             added += added_this_search
-        if paused_during_page:
-            # Keep this page pending: already collected leads are deduplicated
-            # and the rest can be inspected safely after Resume.
-            return added
         # Search results can mutate after the initial snapshot. Reopening
         # this page to chase later cards caused repeated navigations and
         # unnecessary account activity. Complete at most one navigation for
@@ -474,6 +467,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         )
         notify(f"Queued {added_this_search} new matches for '{search}' on page {page_no} "
                f"({added} total this pass; {diagnostics}).")
+        # Pause after this loaded page, without opening the next search
+        # page or requiring a repeat visit on Resume.
+        if pause_event is not None and pause_event.is_set():
+            return added
         # Stop once we have enough to process for the current day; later passes discover more.
         if store.queued_count() >= min(30, target):
             break
