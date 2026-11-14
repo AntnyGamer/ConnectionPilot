@@ -73,6 +73,30 @@ class LogicTests(unittest.TestCase):
                                             'View Jane Example’s profile'),
                          'Jane Example')
 
+    def test_matching_settings_reorder_or_capitalization_are_not_changes(self):
+        from logic import matching_signature
+        before_filters = {
+            'locations': 'New Jersey, Philadelphia',
+            'exclude': 'Crypto, Spam',
+            'degree': '2nd only',
+            'min_score': 25,
+        }
+        after_filters = {
+            'locations': ' PHILADELPHIA, new jersey',
+            'exclude': 'spam, CRYPTO',
+            'degree': '2nd only',
+            'min_score': '25',
+        }
+        original = matching_signature(before_filters, ['Government', 'public policy', 'Rowan'])
+        equivalent = matching_signature(after_filters, ['rowan', ' PUBLIC POLICY ', 'government'])
+        self.assertEqual(original, equivalent)
+        self.assertNotEqual(original, matching_signature(
+            after_filters, ['rowan', 'government']))
+        self.assertNotEqual(original, matching_signature(
+            {**after_filters, 'min_score': 50}, ['Government', 'public policy', 'Rowan']))
+        self.assertNotEqual(original, matching_signature(
+            {**after_filters, 'locations': 'Camden'}, ['Government', 'public policy', 'Rowan']))
+
     def test_name_decorations_do_not_change_identity(self):
         self.assertTrue(names_match("Senator José de la Cruz (He/Him)", "Jose de la Cruz"))
         self.assertTrue(names_match("Jane Example", "Dr. Jane Example (She/Her)"))
@@ -255,6 +279,19 @@ class StorageTests(unittest.TestCase):
         self.db = Store(Path(self.tmp.name) / 'test.sqlite3')
     def tearDown(self):
         self.tmp.cleanup()
+    def test_case_only_phrase_edit_preserves_page_cursor_without_refetch(self):
+        self.db.set_setting('page:Government Affairs', 9)
+        self.db.rename_search_pages([('Government Affairs', 'government affairs')])
+        self.assertEqual(self.db.setting('page:government affairs'), '9')
+        self.assertIsNone(self.db.setting('page:Government Affairs'))
+        # Existing new-spelling values cannot override saved phrase progress.
+        self.db.set_setting('page:Government Affairs', 4)
+        self.db.rename_search_pages([('Government Affairs', 'government affairs')])
+        self.assertEqual(self.db.setting('page:government affairs'), '4')
+        self.assertIsNone(self.db.setting('page:Government Affairs'))
+        self.db.rename_search_pages([('Unseen Phrase', 'unseen phrase')])
+        self.assertIsNone(self.db.setting('page:unseen phrase'))
+
     def test_foreign_key_constraint_is_enforced_on_every_connection(self):
         import sqlite3
         with self.db._conn() as db:
