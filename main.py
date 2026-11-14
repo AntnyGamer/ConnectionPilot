@@ -33,7 +33,8 @@ from google_login import close_google_signin, open_google_signin
 from process_env import prepare_external_processes
 from logic import (FILTER_FIELDS, SEND_START_HOUR, SEND_END_HOUR,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
-                   valid_cooldown_seconds, safe_saved_int, unique_phrases)
+                   valid_cooldown_seconds, safe_saved_int, unique_phrases,
+                   matching_signature)
 from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
@@ -516,7 +517,15 @@ class App:
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
-        matching_changed = saved_settings.get("run:matching") != matching_config
+        # Reordering/capitalizing equivalent terms cannot change matching:
+        # resetting cursors for such formatting edits causes unnecessary
+        # LinkedIn page reloads. Compare behavior, not serialized text.
+        try:
+            old_config = json.loads(saved_settings.get("run:matching", "null"))
+            old_signature = matching_signature(old_config["filters"], old_config["terms"])
+        except (TypeError, ValueError, KeyError, OverflowError):
+            old_signature = None
+        matching_changed = old_signature != matching_signature(self.filters, matches)
         if matching_changed:
             STORE.requeue_filtered()
             if not searches_reset:
