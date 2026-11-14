@@ -291,6 +291,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         valid_profile_links = set()
         named_profile_links = set()
         extraction_errors = 0
+        first_degree_links = set()
+        degree_filtered_links = set()
+        score_filtered_links = set()
+        excluded_links = set()
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
         paused_during_page = False
@@ -357,6 +361,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   return best;
                 }""") or ""
                 if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
+                    first_degree_links.add(url)
                     continue
                 # Search cards that explicitly say 3rd degree can be
                 # excluded when a 2nd-only filter is enabled. Unspecified
@@ -364,17 +369,20 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 if (second_only
                         and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
                                       snippet, re.I)):
+                    degree_filtered_links.add(url)
                     continue
                 score = _match_score_prepared(snippet, score_terms)
                 if minimum_score is None:
                     raise ValueError("Invalid profile minimum score")
                 if score < minimum_score:
+                    score_filtered_links.add(url)
                     continue
                 if exclusions is None:
                     exclusions = clean_terms(settings.get("exclude"))
                 if exclusions:
                     folded_snippet = snippet.casefold()
                     if any(term in folded_snippet for term in exclusions):
+                        excluded_links.add(url)
                         continue
                 seen_this_page.add(url)
                 # Avoid opening a new SQLite connection for every profile
@@ -432,7 +440,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # A failed Playwright snapshot is not a clean scan.
             result_list_changed = True
         else:
-            result_list_changed = bool(final_urls - valid_profile_links)
+            # A newly rendered link to a previously completed member is
+            # already known: only genuinely uninspected URLs require revisiting.
+            result_list_changed = bool(final_urls - valid_profile_links - processed)
         if result_list_changed:
             notify(f"Results for '{search}' changed during inspection; "
                    f"retaining page {page_no} to inspect newly loaded profiles.")
@@ -450,8 +460,20 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             saved_pages[key] = str(page_no + 1)
         else:
             notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
+        # Count unique profiles, not repeated anchors. A member whose second
+        # link produced a valid candidate must not be reported as rejected.
+        accepted_urls = {candidate[0] for candidate in candidates}
+        diagnostics = (
+            f"{len(valid_profile_links)} distinct visible profile links; "
+            f"{len(valid_profile_links & processed)} previously processed; "
+            f"{len(unnamed_new_links)} without readable names; "
+            f"{len(first_degree_links - accepted_urls)} already connected; "
+            f"{len(degree_filtered_links - accepted_urls)} filtered by degree; "
+            f"{len(score_filtered_links - accepted_urls)} below match score; "
+            f"{len(excluded_links - accepted_urls)} excluded by keyword"
+        )
         notify(f"Queued {added_this_search} new matches for '{search}' on page {page_no} "
-               f"({added} total this pass; {len(valid_profile_links)} distinct visible profile links).")
+               f"({added} total this pass; {diagnostics}).")
         # Stop once we have enough to process for the current day; later passes discover more.
         if store.queued_count() >= min(30, target):
             break
