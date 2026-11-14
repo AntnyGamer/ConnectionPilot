@@ -326,11 +326,42 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     # on this page has a readable member name.
                     seen_this_page.add(url)
                     continue
-                name = search_result_name(anchor.inner_text(timeout=1200) or "")
+                link_text = anchor.inner_text(timeout=1200) or ""
+                name = search_result_name(link_text)
                 if not name:
                     name = search_result_name("", anchor.get_attribute("aria-label") or "")
-                # Ignore generic profile actions before reading surrounding
-                # card text. They are not identified people.
+                # Some layouts expose only a generic "View profile" link
+                # even when the member's name is visible in a sibling
+                # heading. Recover it only when exactly one visible heading
+                # belongs to a small container with this one profile URL.
+                # Do not infer names from Connect/Follow/Message action links.
+                if not name and link_text.strip().casefold() not in {
+                        "connect", "follow", "message"}:
+                    try:
+                        card_heading = anchor.evaluate("""el => {
+                          const href = el.getAttribute('href') || '';
+                          const own = new URL(href, 'https://www.linkedin.com')
+                            .pathname.toLowerCase().replace(/\\/$/, '');
+                          for (let n = el.parentElement, depth = 0;
+                               n && depth < 6; n = n.parentElement, depth++) {
+                            const links = Array.from(n.querySelectorAll('a[href*="/in/"]'));
+                            if (links.some(a => new URL(
+                                  a.getAttribute('href') || '', 'https://www.linkedin.com')
+                                  .pathname.toLowerCase().replace(/\\/$/, '') !== own)) break;
+                            const headings = Array.from(
+                              n.querySelectorAll('h1, h2, h3, [role="heading"]'))
+                              .filter(h => h.getClientRects().length > 0
+                                        && getComputedStyle(h).visibility !== 'hidden');
+                            if (headings.length === 1) return headings[0].innerText.trim();
+                          }
+                          return '';
+                        }""")
+                        name = search_result_name(card_heading or "")
+                    except Exception:
+                        # The generic link alone is not verified identity.
+                        # Keep the page pending for a later DOM inspection.
+                        pass
+                # Ignore links that still cannot identify their owner.
                 if not name:
                     continue
                 named_profile_links.add(url)
