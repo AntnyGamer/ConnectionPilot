@@ -916,7 +916,6 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
             cursor_keys = ["page:" + term for term in searches]
-            discovery_failures = 0
             while not stop_event.is_set():
                 if pause_event.is_set():
                     wait_or_stop(2, stop_event, pause_event, notify)
@@ -969,20 +968,15 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                         after_values = store.settings_for(cursor_keys)
                         after_pages = [after_values.get(key, "1") for key in cursor_keys]
                         if after_pages != before_pages:
-                            # Pages with only previously seen or nonmatching profiles
-                            # must not prevent discovery on subsequent result pages.
-                            discovery_failures = 0
+                            # Proceed to new pages, but do not revisit an
+                            # inspected page just because it had no matches.
                             notify("No new matches on this page; checking later search pages.")
                             continue
-                        discovery_failures += 1
-                        if discovery_failures >= 3:
-                            raise StopRun("No matching results after three discovery attempts. "
-                                          "The search layout may have changed or results may be exhausted.")
-                        notify(f"Search temporarily returned no new profiles; retry "
-                               f"{discovery_failures}/2 in 15 seconds.")
-                        wait_or_stop(15, stop_event, pause_event, notify)
-                        continue
-                    discovery_failures = 0
+                        # No search cursor advanced. Retrying this same page
+                        # automatically would increase LinkedIn page views,
+                        # so stop and let the user decide whether to restart.
+                        raise StopRun("Search made no progress. Stopped without automatic "
+                                      "retries to avoid repeated page visits.")
                     profile = store.next_profile()
                 if not profile:
                     raise StopRun("Could not select a queued candidate.")
