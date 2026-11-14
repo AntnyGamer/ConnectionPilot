@@ -909,6 +909,9 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
         on_update()
         return
     searches = unique_phrases(config["searches"])
+    match_terms = unique_phrases(config["match_terms"])
+    if not searches or not match_terms:
+        raise StopRun("Search and matching phrases must be set before opening LinkedIn.")
     initial_cursor_values = _read_initial_search_cursors(store, searches)
     if (initial_cursor_values is not None and searches and
             all(_cursor_exhausted(initial_cursor_values.get("page:" + s, "1"))
@@ -974,7 +977,6 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             check_protection(page)
             notify("Signed in. Campaign is running.")
             on_update()
-            match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
             # These are only deferred in memory. A manual restart can retry
             # them, but one campaign run never reopens failed search pages.
