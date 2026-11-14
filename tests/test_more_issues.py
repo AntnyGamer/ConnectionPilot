@@ -166,9 +166,9 @@ class QueueTests(unittest.TestCase):
         batched.assert_called_once_with(['page:policy', 'page:government'])
         self.assertEqual(self.store.counts().get('queued'), 1)
 
-    def test_newly_loaded_search_links_keep_page_cursor_until_revisited(self):
-        # Result cards can hydrate after an earlier card has already appeared.
-        # A page must not be marked finished until a stable snapshot is read.
+    def test_late_loaded_search_links_do_not_cause_an_extra_page_scan(self):
+        # Count may change during hydration, but discovery must not
+        # query it twice or navigate back to chase late arrivals.
         class Anchor:
             def __init__(self, slug): self.slug = slug
             def is_visible(self, **kwargs): return True
@@ -177,35 +177,31 @@ class QueueTests(unittest.TestCase):
             def evaluate(self, expression): return 'Policy analyst in government'
 
         class Anchors:
-            checks = 0
+            def __init__(self): self.checks = 0
             def count(self):
                 self.checks += 1
-                return 1 if self.checks == 1 else 2
-            def nth(self, index): return Anchor(('first-person', 'second-person')[index])
+                if self.checks > 1:
+                    raise AssertionError("Second search-page scan")
+                return 1
+            def nth(self, index): return Anchor('first-person')
 
         class Page:
             url = 'https://www.linkedin.com/search/results/people/'
-            def __init__(self): self.anchors = Anchors()
-            def goto(self, *args, **kwargs): return None
+            def __init__(self): self.anchors = Anchors(); self.visits = 0
+            def goto(self, *args, **kwargs): self.visits += 1
             def locator(self, selector):
                 if selector == 'main a[href*="/in/"]':
                     return self.anchors
                 return empty_locator()
 
         page = Page()
-        messages = []
-        first = collect_results(page, self.store, ['policy'], ['policy'],
-                                threading.Event(), messages.append, 200,
+        found = collect_results(page, self.store, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 200,
                                 {'min_score':25})
-        self.assertEqual(first, 1)
-        self.assertEqual(self.store.setting('page:policy', '1'), '1')
-        self.assertIn('changed during inspection', ' '.join(messages))
-        second = collect_results(page, self.store, ['policy'], ['policy'],
-                                 threading.Event(), messages.append, 200,
-                                 {'min_score':25})
-        self.assertEqual(second, 1)
+        self.assertEqual(found, 1)
+        self.assertEqual(page.visits, 1)
+        self.assertEqual(page.anchors.checks, 1)
         self.assertEqual(self.store.setting('page:policy'), '2')
-        self.assertEqual(self.store.queued_count(), 2)
 
     def test_warning_appearing_during_discovery_stops_before_next_search(self):
         # A restriction warning may appear after the initial protection checks
@@ -318,8 +314,8 @@ class QueueTests(unittest.TestCase):
         self.assertIn('page=1', page.visited[0])
         self.assertIn('page=2', page.visited[1])
 
-    def test_generic_action_links_do_not_discard_unread_people(self):
-        """Valid profile URLs without names must not be treated as inspected leads."""
+    def test_generic_action_links_do_not_trigger_repeated_page_scans(self):
+        """Unidentified action links are never queued or revisited automatically."""
         class ActionLink:
             def is_visible(self, **kwargs): return True
             def get_attribute(self, _): return '/in/real-user-123/'
@@ -350,8 +346,8 @@ class QueueTests(unittest.TestCase):
         added = collect_results(Page(), self.store, ['government'], ['policy'],
                                 threading.Event(), messages.append, 20, {'min_score':25})
         self.assertEqual(added, 0)
-        self.assertEqual(self.store.setting('page:government', '1'), '1')
-        self.assertIn('lack identifiable names', ' '.join(messages))
+        self.assertEqual(self.store.setting('page:government'), '2')
+        self.assertIn('without verified names', ' '.join(messages))
 
 
 
