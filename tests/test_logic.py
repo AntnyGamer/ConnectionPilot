@@ -59,6 +59,20 @@ class LogicTests(unittest.TestCase):
                 self.assertIsNone(search_result_name(generic))
                 self.assertIsNone(search_result_name("View profile", generic))
 
+    def test_named_profile_action_labels_are_not_member_names(self):
+        from logic import is_profile_action_label
+        for action in ('Connect with Jane Example', 'Follow Jane Example',
+                       'Message Jane Example', 'Invite Jane Example to connect',
+                       'Send Jane Example a message', 'Pending', 'Remove connection'):
+            with self.subTest(action=action):
+                self.assertTrue(is_profile_action_label(action))
+                self.assertIsNone(search_result_name(action))
+                self.assertIsNone(search_result_name('View profile', action))
+        self.assertFalse(is_profile_action_label('Jane Example'))
+        self.assertEqual(search_result_name('Connect with Jane Example',
+                                            'View Jane Example’s profile'),
+                         'Jane Example')
+
     def test_name_decorations_do_not_change_identity(self):
         self.assertTrue(names_match("Senator José de la Cruz (He/Him)", "Jose de la Cruz"))
         self.assertTrue(names_match("Jane Example", "Dr. Jane Example (She/Her)"))
