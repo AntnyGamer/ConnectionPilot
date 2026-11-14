@@ -294,6 +294,20 @@ class WorkerRecoveryTests(unittest.TestCase):
             collect.assert_not_called()
         self.assertEqual(self.store.total_attempts(), 0)
 
+    def test_missing_campaign_phrases_stop_before_browser_startup(self):
+        for field in ('searches', 'match_terms'):
+            with self.subTest(field=field):
+                self.page.goto.reset_mock()
+                self.context.chromium.launch_persistent_context.reset_mock()
+                original = self.config[field]
+                self.config[field] = []
+                try:
+                    self.assertEqual(self.run_fake(), 0)
+                finally:
+                    self.config[field] = original
+                self.page.goto.assert_not_called()
+                self.context.chromium.launch_persistent_context.assert_not_called()
+
     def test_exhausted_discovery_skips_feed_and_browser_entirely(self):
         self.store.set_setting('page:political science', '16')
         with patch('automation.collect_results') as collect:
