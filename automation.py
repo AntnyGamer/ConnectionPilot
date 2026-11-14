@@ -214,6 +214,16 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     remaining_goal = max(0, target - store.total_attempts())
     if remaining_goal == 0:
         return 0
+    settings = filters or {}
+    # Validate before the first network request. A malformed score must not
+    # be treated as a card-extraction problem that advances a search cursor.
+    raw_score = settings.get("min_score", 1)
+    try:
+        minimum_score = int(raw_score)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("Invalid profile minimum score") from exc
+    if not 0 <= minimum_score <= 100:
+        raise ValueError("Invalid profile minimum score")
     queue_threshold = min(30, remaining_goal)
     # The same worker owns discovery for this run. Queue inserts are batched
     # below, so we can maintain the exact count locally instead of executing
@@ -222,14 +232,8 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     if queued_total >= queue_threshold:
         return 0
     added = 0
-    settings = filters or {}
     # Matching terms and settings do not change during this discovery pass.
     score_terms = _normalized_score_terms(match_terms)
-    raw_score = settings.get("min_score", 1)
-    try:
-        minimum_score = max(0, int(raw_score))
-    except (ValueError, TypeError, OverflowError):
-        minimum_score = None
     second_only = str(settings.get("degree", "Any")) == "2nd only"
     exclusions = None
     # Only navigation timeouts are recoverable here; unexpected browser
@@ -407,8 +411,6 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     seen_this_page.add(url)
                     continue
                 score = _match_score_prepared(snippet, score_terms)
-                if minimum_score is None:
-                    raise ValueError("Invalid profile minimum score")
                 if score < minimum_score:
                     # Never override the user's minimum relevance threshold
                     # based solely on a sparse search card. Users who choose
