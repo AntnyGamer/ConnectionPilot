@@ -179,6 +179,42 @@ class WorkerRecoveryTests(unittest.TestCase):
                         self.stop, self.status.append, 10), 0)
                 self.assertIn("page=1", self.page.goto.call_args.args[0])
 
+    def test_failed_search_phrase_is_not_retried_when_another_cursor_advances(self):
+        # A failed search can otherwise be reloaded on every discovery pass
+        # while another phrase keeps progressing through fresh result pages.
+        self.config['searches'] = ['political science', 'government']
+        visited = []
+
+        def discover(page, store, searches, match_terms, stop_event, notify,
+                     target, filters, pause_event, deferred_searches):
+            visited.append(tuple(searches))
+            if len(visited) == 1:
+                deferred_searches.add('political science')
+                store.set_setting('page:government', 2)
+                return 0
+            raise StopRun('done')
+
+        with patch('automation.collect_results', side_effect=discover) as collect:
+            self.run_fake()
+        self.assertEqual(collect.call_count, 2)
+        self.assertEqual(visited, [
+            ('political science', 'government'), ('government',)])
+        # A manual restart still has the original saved page available.
+        self.assertIsNone(self.store.setting('page:political science'))
+        self.assertEqual(self.store.setting('page:government'), '2')
+
+    def test_all_deferred_searches_stop_without_a_second_discovery(self):
+        self.config['searches'] = ['political science', 'government']
+
+        def discover(page, store, searches, match_terms, stop_event, notify,
+                     target, filters, pause_event, deferred_searches):
+            deferred_searches.update(searches)
+            return 0
+
+        with patch('automation.collect_results', side_effect=discover) as collect:
+            self.run_fake()
+        collect.assert_called_once()
+
     def test_empty_search_stops_after_first_attempt_without_reloading_page(self):
         with patch('automation.collect_results', return_value=0) as collect:
             self.assertEqual(self.run_fake(), 0)
