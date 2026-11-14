@@ -863,18 +863,21 @@ def _goal_progress_message(store):
             "Some clicks may have been rejected by LinkedIn.")
 
 
-def _all_search_pages_exhausted(store, searches):
-    """No queued profiles and all saved search cursors are past the page cap.
+def _read_initial_search_cursors(store, searches):
+    """Preload cursors for a queue-empty campaign with one local DB read.
 
-    Uses only the local SQLite database, so a completed search cannot cause
-    another LinkedIn feed visit merely because the user clicked Start.
+    Reuse this snapshot on the first discovery pass; the saved search state
+    does not change while the worker is paused or waiting for sending hours.
     """
     if not searches or store.next_profile() is not None:
-        return False
-    keys = ["page:" + search for search in searches]
-    pages = store.settings_for(keys)
+        return None
+    return store.settings_for(["page:" + search for search in searches])
+
+
+def _cursor_exhausted(value):
+    """Unreadable cursors are recoverable, not proof of exhausted discovery."""
     try:
-        return all(int(pages.get(key, "1")) > 15 for key in keys)
+        return int(value) > 15
     except (TypeError, ValueError, OverflowError):
         return False
 
@@ -891,7 +894,10 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
         on_update()
         return
     searches = unique_phrases(config["searches"])
-    if _all_search_pages_exhausted(store, searches):
+    initial_cursor_values = _read_initial_search_cursors(store, searches)
+    if (initial_cursor_values is not None and searches and
+            all(_cursor_exhausted(initial_cursor_values.get("page:" + s, "1"))
+                for s in searches)):
         raise StopRun("No queued profiles and all search pages have already been inspected. "
                       "Change search phrases to restart discovery; no LinkedIn page was loaded.")
     try:
@@ -991,17 +997,15 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                     active_searches = [search for search in searches
                                        if search not in deferred_searches]
                     active_cursor_keys = ["page:" + search for search in active_searches]
-                    before_values = store.settings_for(active_cursor_keys)
+                    if initial_cursor_values is not None:
+                        # This is the same local DB snapshot used for the
+                        # startup no-work check; don't query SQLite twice.
+                        before_values = initial_cursor_values
+                        initial_cursor_values = None
+                    else:
+                        before_values = store.settings_for(active_cursor_keys)
                     before_pages = [before_values.get(key, "1") for key in active_cursor_keys]
-                    # Once all search cursors exceed the built-in 15-page
-                    # ceiling there is no useful retry: discovery would never
-                    # visit another result page until searches are changed.
-                    def exhausted_cursor(value):
-                        try:
-                            return int(value) > 15
-                        except (TypeError, ValueError, OverflowError):
-                            return False
-                    if not active_searches or all(exhausted_cursor(value) for value in before_pages):
+                    if not active_searches or all(_cursor_exhausted(value) for value in before_pages):
                         raise StopRun("No further search pages remain for this run. "
                                       "Failed pages were not retried automatically.")
                     new_count = collect_results(page, store, active_searches, match_terms,
