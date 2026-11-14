@@ -121,6 +121,57 @@ class WorkerRecoveryTests(unittest.TestCase):
         queued.assert_called_once()
         self.assertEqual(self.store.counts().get("queued"), 1)
 
+    def test_discovery_stops_loading_searches_once_remaining_goal_is_queued(self):
+        # With nine attempted invitations out of a goal of ten, the next
+        # matching candidate is enough. Don't load other search phrases just
+        # to fill the old fixed batch of thirty.
+        for i in range(9):
+            url = f'https://www.linkedin.com/in/attempted-{i}/'
+            self.store.add(url, f'Attempted {i}', 'policy', 25)
+            self.store.mark(url, 'uncertain', 'Recorded prior invitation action')
+
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/one-new-person/'
+            def inner_text(self, **kwargs): return 'One New Person'
+            def evaluate(self, script): return 'Government public policy analyst'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, index): return Anchor()
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.visited = []
+            def goto(self, url, **kwargs):
+                self.visited.append(url)
+                return SimpleNamespace(status=200)
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return SimpleNamespace(all=lambda: [], count=lambda: 0)
+
+        page = Page()
+        with patch('automation.check_protection'):
+            added = collect_results(
+                page, self.store, ['government', 'public policy'], ['policy'],
+                self.stop, self.status.append, 10)
+        self.assertEqual(added, 1)
+        self.assertEqual(len(page.visited), 1)
+        self.assertIn('keywords=government', page.visited[0])
+        self.assertIsNone(self.store.setting('page:public policy'))
+        self.assertEqual(self.store.queued_count(), 1)
+
+    def test_discovery_at_target_does_not_open_any_search_page(self):
+        url = 'https://www.linkedin.com/in/already-at-goal/'
+        self.store.add(url, 'Already At Goal', 'government policy', 25)
+        self.store.mark(url, 'uncertain', 'Potential invitation')
+        with patch('automation.check_protection'):
+            self.assertEqual(collect_results(
+                self.page, self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 1), 0)
+        self.page.goto.assert_not_called()
+
     def test_worker_reads_all_search_cursors_in_one_batch(self):
         self.config['searches'] = ['political science', 'government', 'public policy']
         with patch.object(self.store, 'settings_for',
