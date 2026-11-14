@@ -84,7 +84,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(candidate['name'], 'Updated Queued')
         self.assertEqual(candidate['score'], 75)
 
-    def test_pause_in_discovery_keeps_page_and_resumes_without_duplicates(self):
+    def test_pause_finishes_loaded_page_instead_of_refetching_on_resume(self):
         pause = threading.Event()
         pause_on_first = [True]
 
@@ -93,8 +93,8 @@ class QueueTests(unittest.TestCase):
             def is_visible(self, **kw): return True
             def get_attribute(self, name): return '/in/' + self.slug + '/'
             def evaluate(self, expression):
-                # Pause while inspecting the first result, before the batch
-                # is persisted; next iteration must notice the pause.
+                # Pause while inspecting the first result. Finish the
+                # already-loaded page to avoid fetching it again on resume.
                 if self.slug == 'person-one' and pause_on_first[0]:
                     pause_on_first[0] = False
                     pause.set()
@@ -110,7 +110,8 @@ class QueueTests(unittest.TestCase):
 
         class Page:
             url = 'https://www.linkedin.com/search/results/people/'
-            def goto(self, *a, **kw): pass
+            def __init__(self): self.visited = []
+            def goto(self, url, **kw): self.visited.append(url)
             def wait_for_timeout(self, *a): pass
             def locator(self, selector):
                 if selector == 'main a[href*="/in/"]':
@@ -120,19 +121,29 @@ class QueueTests(unittest.TestCase):
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
                 return empty_locator()
 
-        added = collect_results(Page(), self.store, ['government'], ['policy'],
+        page = Page()
+        added = collect_results(page, self.store, ['government'], ['policy'],
                                 threading.Event(), lambda s: None, 200,
                                 {'min_score':25}, pause)
-        self.assertEqual(added, 1)
-        self.assertEqual(self.store.setting('page:government', '1'), '1')
-        self.assertEqual(self.store.counts().get('queued'), 1)
-        pause.clear()
-        added = collect_results(Page(), self.store, ['government'], ['policy'],
-                                threading.Event(), lambda s: None, 200,
-                                {'min_score':25}, pause)
-        self.assertEqual(added, 1)
-        self.assertEqual(self.store.counts().get('queued'), 2)
+        self.assertEqual(added, 2)
         self.assertEqual(self.store.setting('page:government'), '2')
+        self.assertEqual(self.store.counts().get('queued'), 2)
+        self.assertEqual(len(page.visited), 1)
+        # While paused no new page is loaded.
+        self.assertEqual(collect_results(page, self.store, ['government'], ['policy'],
+                         threading.Event(), lambda s: None, 200,
+                         {'min_score':25}, pause), 0)
+        self.assertEqual(len(page.visited), 1)
+        pause.clear()
+        # On resume, advance to page 2 instead of fetching page 1 again.
+        added = collect_results(page, self.store, ['government'], ['policy'],
+                                threading.Event(), lambda s: None, 200,
+                                {'min_score':25}, pause)
+        self.assertEqual(added, 0)
+        self.assertEqual(len(page.visited), 2)
+        self.assertIn('page=1', page.visited[0])
+        self.assertIn('page=2', page.visited[1])
+        self.assertEqual(self.store.setting('page:government'), '3')
 
     def test_processed_candidates_loaded_once_for_multiple_search_phrases(self):
         from unittest.mock import patch
