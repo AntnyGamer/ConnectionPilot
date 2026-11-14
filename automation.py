@@ -856,6 +856,22 @@ def _goal_progress_message(store):
             "Some clicks may have been rejected by LinkedIn.")
 
 
+def _all_search_pages_exhausted(store, searches):
+    """No queued profiles and all saved search cursors are past the page cap.
+
+    Uses only the local SQLite database, so a completed search cannot cause
+    another LinkedIn feed visit merely because the user clicked Start.
+    """
+    if not searches or store.next_profile() is not None:
+        return False
+    keys = ["page:" + search for search in searches]
+    pages = store.settings_for(keys)
+    try:
+        return all(int(pages.get(key, "1")) > 15 for key in keys)
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
     """Run in a background thread. One click launches one visible browser session."""
     if stop_event.is_set():
@@ -867,6 +883,10 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
         notify(_goal_progress_message(store))
         on_update()
         return
+    searches = unique_phrases(config["searches"])
+    if _all_search_pages_exhausted(store, searches):
+        raise StopRun("No queued profiles and all search pages have already been inspected. "
+                      "Change search phrases to restart discovery; no LinkedIn page was loaded.")
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -926,7 +946,6 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             check_protection(page)
             notify("Signed in. Campaign is running.")
             on_update()
-            searches = unique_phrases(config["searches"])
             match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
             # These are only deferred in memory. A manual restart can retry
