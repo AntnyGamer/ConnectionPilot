@@ -806,6 +806,37 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIsNone(self.db.next_profile())
         self.assertEqual(self.db.setting('page:policy', '1'), '1')
 
+    def test_search_page_heading_does_not_inflate_profile_match_score(self):
+        # The sole search result is an unrelated chef, but the search page's
+        # heading contains "government policy". That heading is not evidence
+        # that the chef works in public policy.
+        doc = """<html><body><main>
+          <h1>Government policy search results</h1>
+          <div><a href='/in/jane-example/'>Jane Example</a>
+               <p>Chef in a restaurant</p></div>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        messages = []
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), messages.append, 200,
+                                {'min_score': 25})
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertIn('1 below match score', ' '.join(messages))
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
     def test_generic_link_does_not_mask_valid_name_for_same_profile(self):
         doc = """<html><body><main>
           <div><a href='/in/jane-example/'>View profile</a>
