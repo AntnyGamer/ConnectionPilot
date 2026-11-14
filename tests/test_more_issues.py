@@ -168,12 +168,14 @@ class QueueTests(unittest.TestCase):
 
         with patch.object(self.store, 'processed_urls', wraps=self.store.processed_urls) as processed, \
              patch.object(self.store, 'settings_for', wraps=self.store.settings_for) as batched, \
+             patch.object(self.store, 'queued_count', wraps=self.store.queued_count) as queue_reads, \
              patch.object(self.store, 'setting', side_effect=AssertionError('Per-key read')):
             count = collect_results(Page(), self.store,
                                     ['policy', 'government'], ['policy'],
                                     threading.Event(), lambda _: None, 200)
         self.assertEqual(count, 1)
         self.assertEqual(processed.call_count, 1)
+        queue_reads.assert_called_once()
         batched.assert_called_once_with(['page:policy', 'page:government'])
         self.assertEqual(self.store.counts().get('queued'), 1)
 
