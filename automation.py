@@ -15,7 +15,7 @@ from process_env import prepare_external_processes
 from logic import (has_stop_signal, in_work_hours, local_now, _match_score_prepared, _normalized_score_terms,
                    clean_terms, _name_parts, _name_parts_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours,
-                   unique_phrases)
+                   unique_phrases, is_profile_action_label)
 
 # Restricted account titles are checked as complete headings, never as a
 # keyword occurring anywhere in someone's authored text.
@@ -353,8 +353,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # heading. Recover it only when exactly one visible heading
                 # belongs to a small container with this one profile URL.
                 # Do not infer names from Connect/Follow/Message action links.
-                if not name and link_text.strip().casefold() not in {
-                        "connect", "follow", "message"}:
+                if not name and not is_profile_action_label(link_text):
                     try:
                         card_heading = anchor.evaluate("""el => {
                           const href = el.getAttribute('href') || '';
