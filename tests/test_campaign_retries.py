@@ -179,11 +179,12 @@ class WorkerRecoveryTests(unittest.TestCase):
                         self.stop, self.status.append, 10), 0)
                 self.assertIn("page=1", self.page.goto.call_args.args[0])
 
-    def test_empty_search_retried_twice_before_halt(self):
+    def test_empty_search_stops_after_first_attempt_without_reloading_page(self):
         with patch('automation.collect_results', return_value=0) as collect:
-            self.assertEqual(self.run_fake(), 2)
-            self.assertEqual(collect.call_count, 3)
-            self.assertTrue(any('retry' in s.lower() for s in self.status))
+            self.assertEqual(self.run_fake(), 0)
+            self.assertEqual(collect.call_count, 1)
+            self.assertTrue(any('without automatic retries' in s.lower()
+                                for s in self.status))
 
     def test_exhausted_discovery_pages_stop_without_empty_retries(self):
         self.store.set_setting('page:political science', '16')
