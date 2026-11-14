@@ -316,9 +316,9 @@ class StorageTests(unittest.TestCase):
         app.pause_btn = MagicMock()
         app.stop_btn = MagicMock()
         app.emit = MagicMock()
-        with patch.object(main, 'STORE', self.db), \\
-             patch.object(main.threading, 'Thread') as thread, \\
-             patch.object(main.messagebox, 'showerror') as error:
+        with (patch.object(main, 'STORE', self.db),
+              patch.object(main.threading, 'Thread') as thread,
+              patch.object(main.messagebox, 'showerror') as error):
             app.start()
         error.assert_not_called()
         thread.assert_called_once()
