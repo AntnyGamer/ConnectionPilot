@@ -279,6 +279,24 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 check_protection(page)
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
+        # An attached anchor can still belong to a hidden search skeleton.
+        # Wait for a visible member link rather than treating hidden links
+        # as a fully loaded results page. Use :visible so a permanently
+        # hidden first link does not block a visible second link.
+        try:
+            first_visible = anchors.nth(0).is_visible(timeout=1000)
+        except (AttributeError, TypeError):
+            first_visible = True  # Lightweight offline page adapter.
+        if not first_visible:
+            try:
+                page.locator('main a[href*="/in/"]:visible').first.wait_for(
+                    state="visible", timeout=4000)
+                anchor_count = anchors.count()
+            except (PlaywrightTimeoutError, TimeoutError):
+                check_protection(page)
+                notify(f"Profile links for '{search}' are present but not visible yet; "
+                       f"retaining page {page_no} for another attempt.")
+                continue
         # Result hydration may have changed the page or redirected elsewhere.
         # Check again before treating any links as search candidates.
         check_protection(page)
