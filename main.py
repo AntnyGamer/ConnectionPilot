@@ -370,10 +370,14 @@ class App:
         ttk.Button(container, text="Save filters", command=save, style="Primary.TButton").pack(anchor="e")
         dlg.bind("<Escape>", lambda _: dlg.destroy())
 
-    def put_log(self, msg):
+    def put_logs(self, messages):
+        """Append a UI event batch with a single widget update and trim."""
+        if not messages:
+            return
         widget = self.log_widget
+        entries = "".join(f"[{datetime.now():%H:%M:%S}] {msg}\n" for msg in messages)
         widget.configure(state="normal")
-        widget.insert("end", f"[{datetime.now():%H:%M:%S}] {msg}\n")
+        widget.insert("end", entries)
         # Keep only the recent activity in Tk's text widget. The permanent
         # campaign history is stored separately in SQLite.
         last_line = int(widget.index("end-1c").split(".", 1)[0])
@@ -382,6 +386,9 @@ class App:
             widget.delete("1.0", f"{excess + 1}.0")
         widget.see("end")
         widget.configure(state="disabled")
+
+    def put_log(self, msg):
+        self.put_logs((msg,))
 
     def refresh(self):
         counts, total, confirmed, possible = STORE.dashboard_stats()
@@ -428,16 +435,20 @@ class App:
         # Never monopolize Tk's main thread when the worker has emitted a
         # large burst of messages; quickly schedule the remaining batch.
         needs_refresh = False
+        last_status = None
+        activity_lines = []
         for _ in range(MAX_UI_EVENTS_PER_TICK):
             try:
                 kind, data = self.events.get_nowait()
             except queue.Empty:
                 break
             if kind == "status":
-                self.status.set(data)
+                # Tk only repaints after this callback; intermediate status
+                # assignments are redundant. Preserve every activity entry.
+                last_status = data
                 # Don't turn every minute of waiting into an enormous log.
                 if "Next action in" not in data:
-                    self.put_log(data)
+                    activity_lines.append(data)
             elif kind == "refresh":
                 needs_refresh = True
             elif kind == "done":
@@ -450,6 +461,9 @@ class App:
                 self.stop_btn.configure(state="disabled")
                 self.pause_event.clear()
                 needs_refresh = True
+        if last_status is not None:
+            self.status.set(last_status)
+        self.put_logs(activity_lines)
         # Many worker messages can request the same counter redraw. Preserve
         # the final current state, but read SQLite and update Tk just once.
         if needs_refresh:
