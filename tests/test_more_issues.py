@@ -179,6 +179,46 @@ class QueueTests(unittest.TestCase):
         batched.assert_called_once_with(['page:policy', 'page:government'])
         self.assertEqual(self.store.counts().get('queued'), 1)
 
+    def test_ineligible_connection_degree_skips_duplicate_anchor_dom_reads(self):
+        # A result sometimes links to the same person more than once.
+        # Definitive first/third-degree exclusions need only one card read.
+        for degree_text, filters in (
+            ("1st degree connection, public policy analyst", {"min_score": 25}),
+            ("3rd degree connection, public policy analyst",
+             {"min_score": 25, "degree": "2nd only"}),
+        ):
+            with self.subTest(degree_text=degree_text):
+                self.store.reset_search_pages(['policy'])
+                calls = []
+
+                class Anchor:
+                    def is_visible(self, **kwargs): return True
+                    def get_attribute(self, key): return '/in/duplicate-user/'
+                    def inner_text(self, **kwargs): return 'Duplicate User'
+                    def evaluate(self, script):
+                        calls.append(script)
+                        return degree_text
+
+                class Anchors:
+                    def count(self): return 2
+                    def nth(self, index): return Anchor()
+
+                class Page:
+                    url = 'https://www.linkedin.com/search/results/people/'
+                    def goto(self, *args, **kwargs): pass
+                    def locator(self, selector):
+                        if selector == 'main a[href*="/in/"]':
+                            return Anchors()
+                        return empty_locator()
+
+                found = collect_results(
+                    Page(), self.store, ['policy'], ['policy'],
+                    threading.Event(), lambda _: None, 10, filters)
+                self.assertEqual(found, 0)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(self.store.queued_count(), 0)
+                self.assertEqual(self.store.setting('page:policy'), '2')
+
     def test_late_loaded_search_links_do_not_cause_an_extra_page_scan(self):
         # Count may change during hydration, but discovery must not
         # query it twice or navigate back to chase late arrivals.
