@@ -721,6 +721,59 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.next_profile()['name'], 'Jane Example')
         self.assertEqual(self.db.setting('page:policy'), '2')
 
+    def test_sparse_search_card_is_queued_for_full_profile_verification(self):
+        # A name-only LinkedIn result has insufficient search-card evidence to
+        # assess relevance. Its profile still needs to pass the match filter.
+        search_html = """<html><body><main>
+          <a href='/in/jane-example/'>Jane Example</a>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(search_html)
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        messages = []
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), messages.append, 200,
+                                {'min_score': 25})
+        self.assertEqual(added, 1)
+        profile = self.db.next_profile()
+        self.assertEqual(profile['name'], 'Jane Example')
+        self.assertEqual(profile['score'], 0)
+        self.assertIn('1 sparse cards awaiting profile verification', ' '.join(messages))
+
+        # An unrelated complete profile must still be rejected without a click.
+        unrelated_html = """<html><body><main>
+          <div><h1>Jane Example</h1><p>Works in food service</p>
+          <button id='connect' onclick="this.textContent='Pending'">Connect</button>
+          </div></main></body></html>"""
+
+        class ProfilePage:
+            url = 'https://www.linkedin.com/in/jane-example/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(unrelated_html)
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        result, reason = send_one(ProfilePage(self.page), profile, self.db,
+                                  lambda _: None, {'min_score': 25}, ['policy'])
+        self.assertEqual(result, 'filtered', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
+        self.assertEqual(self.db.total_attempts(), 0)
+
     def test_generic_link_does_not_mask_valid_name_for_same_profile(self):
         doc = """<html><body><main>
           <div><a href='/in/jane-example/'>View profile</a>
