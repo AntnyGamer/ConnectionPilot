@@ -208,6 +208,13 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     filters=None, pause_event=None, deferred_searches=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
+    # A campaign close to its goal needs fewer leads than a new campaign.
+    # Stop discovery once enough candidates exist to satisfy the remaining
+    # goal instead of visiting more search pages to fill a fixed batch of 30.
+    remaining_goal = max(0, target - store.total_attempts())
+    if remaining_goal == 0:
+        return 0
+    queue_threshold = min(30, remaining_goal)
     added = 0
     settings = filters or {}
     # Matching terms and settings do not change during this discovery pass.
@@ -472,7 +479,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         if pause_event is not None and pause_event.is_set():
             return added
         # Stop once we have enough to process for the current day; later passes discover more.
-        if store.queued_count() >= min(30, target):
+        if store.queued_count() >= queue_threshold:
             break
     return added
 
