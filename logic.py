@@ -230,6 +230,24 @@ def clean_terms(value) -> list[str]:
     return result
 
 
+def matching_signature(filters: dict, terms: list[str]) -> tuple:
+    """Canonicalize only settings with order- and case-insensitive semantics.
+
+    This is for deciding whether old search cursors need resetting. It does
+    not change the user's displayed filters or the actual matching rules.
+    """
+    if not isinstance(filters, dict) or not isinstance(terms, list):
+        raise ValueError("Invalid matching configuration")
+    threshold = int(filters.get("min_score", 0))
+    return (
+        tuple(sorted(_normalized_score_terms(terms))),
+        tuple((field, tuple(sorted(clean_terms(filters.get(field)))))
+              for field in (*FILTER_FIELDS, "exclude")),
+        str(filters.get("degree", "Any")),
+        threshold,
+    )
+
+
 def passes_profile_filters(profile_text: str, header_text: str, filters: dict | None,
                            match_terms: list[str] | None = None) -> tuple[bool, str]:
     """Strictly require visible evidence for every enabled filter group."""
