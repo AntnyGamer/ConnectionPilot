@@ -757,6 +757,55 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(broad, 1)
         self.assertEqual(self.db.next_profile()['score'], 0)
 
+    def test_named_connect_action_link_is_never_used_as_identity(self):
+        doc = """<html><body><main><div>
+          <a href='/in/jane-example/'>Connect with Jane Example</a>
+          <p>Government public policy analyst</p>
+          </div></main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+
+    def test_generic_link_does_not_borrow_search_page_heading_as_name(self):
+        doc = """<html><body><main>
+          <h1>People</h1>
+          <div><a href='/in/jane-example/'>View profile</a></div>
+          <p>Government public policy analyst</p>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy', '1'), '1')
+
     def test_generic_link_does_not_mask_valid_name_for_same_profile(self):
         doc = """<html><body><main>
           <div><a href='/in/jane-example/'>View profile</a>
