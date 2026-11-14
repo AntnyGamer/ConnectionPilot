@@ -312,6 +312,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         first_degree_links = set()
         degree_filtered_links = set()
         score_filtered_links = set()
+        sparse_card_links = set()
         excluded_links = set()
         # Scan the *entire* displayed results page rather than silently
         # discarding links past an arbitrary first-80 cutoff.
@@ -424,8 +425,24 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 if minimum_score is None:
                     raise ValueError("Invalid profile minimum score")
                 if score < minimum_score:
-                    score_filtered_links.add(url)
-                    continue
+                    # A search card containing just the member's name offers
+                    # no evidence to score. The full profile is checked again
+                    # before any invitation, so retain these sparse cards for
+                    # that verification instead of silently discarding them.
+                    # Never make this exception for a card with an actual
+                    # nonmatching headline, or when no verification filters
+                    # were configured by the caller.
+                    sparse_card = (
+                        filters is not None and
+                        " ".join(snippet.split()).casefold() in {
+                            " ".join(link_text.split()).casefold(),
+                            " ".join(name.split()).casefold(),
+                        })
+                    if sparse_card:
+                        sparse_card_links.add(url)
+                    else:
+                        score_filtered_links.add(url)
+                        continue
                 if exclusions is None:
                     exclusions = clean_terms(settings.get("exclude"))
                 if exclusions:
@@ -519,6 +536,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             f"{len(first_degree_links - accepted_urls)} already connected; "
             f"{len(degree_filtered_links - accepted_urls)} filtered by degree; "
             f"{len(score_filtered_links - accepted_urls)} below match score; "
+            f"{len(sparse_card_links & accepted_urls)} sparse cards awaiting profile verification; "
             f"{len(excluded_links - accepted_urls)} excluded by keyword"
         )
         notify(f"Queued {added_this_search} new matches for '{search}' on page {page_no} "
