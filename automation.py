@@ -15,7 +15,7 @@ from process_env import prepare_external_processes
 from logic import (has_stop_signal, in_work_hours, local_now, _match_score_prepared, _normalized_score_terms,
                    clean_terms, _name_parts, _name_parts_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours,
-                   unique_phrases, is_profile_action_label)
+                   unique_phrases)
 
 # Restricted account titles are checked as complete headings, never as a
 # keyword occurring anywhere in someone's authored text.
@@ -279,24 +279,6 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 check_protection(page)
                 notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
                 continue
-        # An attached anchor can still belong to a hidden search skeleton.
-        # Wait for a visible member link rather than treating hidden links
-        # as a fully loaded results page. Use :visible so a permanently
-        # hidden first link does not block a visible second link.
-        try:
-            first_visible = anchors.nth(0).is_visible(timeout=1000)
-        except (AttributeError, TypeError):
-            first_visible = True  # Lightweight offline page adapter.
-        if not first_visible:
-            try:
-                page.locator('main a[href*="/in/"]:visible').first.wait_for(
-                    state="visible", timeout=4000)
-                anchor_count = anchors.count()
-            except (PlaywrightTimeoutError, TimeoutError):
-                check_protection(page)
-                notify(f"Profile links for '{search}' are present but not visible yet; "
-                       f"retaining page {page_no} for another attempt.")
-                continue
         # Result hydration may have changed the page or redirected elsewhere.
         # Check again before treating any links as search candidates.
         check_protection(page)
@@ -344,45 +326,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     # on this page has a readable member name.
                     seen_this_page.add(url)
                     continue
-                link_text = anchor.inner_text(timeout=1200) or ""
-                name = search_result_name(link_text)
+                # Only the person's actual visible name or an explicit
+                # accessible profile label is enough to queue a candidate.
+                # Do not open extra profiles to resolve generic card links.
+                name = search_result_name(anchor.inner_text(timeout=1200) or "")
                 if not name:
                     name = search_result_name("", anchor.get_attribute("aria-label") or "")
-                # Some layouts expose only a generic "View profile" link
-                # even when the member's name is visible in a sibling
-                # heading. Recover it only when exactly one visible heading
-                # belongs to a small container with this one profile URL.
-                # Do not infer names from Connect/Follow/Message action links.
-                if not name and not is_profile_action_label(link_text):
-                    try:
-                        card_heading = anchor.evaluate("""el => {
-                          const href = el.getAttribute('href') || '';
-                          const own = new URL(href, 'https://www.linkedin.com')
-                            .pathname.toLowerCase().replace(/\\/$/, '');
-                          for (let n = el.parentElement, depth = 0;
-                               n && depth < 6; n = n.parentElement, depth++) {
-                            // A search-page heading must never be borrowed as
-                            // a person's name when a card itself has no name.
-                            if (n.matches('main, [role="main"]')) break;
-                            if (n.querySelector('aside, [role="complementary"]')) break;
-                            const links = Array.from(n.querySelectorAll('a[href*="/in/"]'));
-                            if (links.some(a => new URL(
-                                  a.getAttribute('href') || '', 'https://www.linkedin.com')
-                                  .pathname.toLowerCase().replace(/\\/$/, '') !== own)) break;
-                            const headings = Array.from(
-                              n.querySelectorAll('h1, h2, h3, [role="heading"]'))
-                              .filter(h => h.getClientRects().length > 0
-                                        && getComputedStyle(h).visibility !== 'hidden');
-                            if (headings.length === 1) return headings[0].innerText.trim();
-                          }
-                          return '';
-                        }""")
-                        name = search_result_name(card_heading or "")
-                    except Exception:
-                        # The generic link alone is not verified identity.
-                        # Keep the page pending for a later DOM inspection.
-                        pass
-                # Ignore links that still cannot identify their owner.
                 if not name:
                     continue
                 named_profile_links.add(url)
@@ -471,55 +420,31 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # Keep this page pending: already collected leads are deduplicated
             # and the rest can be inspected safely after Resume.
             return added
-        # A readable new member on a mixed results page must not obscure a
-        # different, unnamed new member. Multiple links to a single person
-        # are fine once any one link supplies that person's actual name.
+        # Search results can mutate after the initial snapshot. Reopening
+        # this page to chase later cards caused repeated navigations and
+        # unnecessary account activity. Complete at most one navigation for
+        # each successfully opened search page; collect only identifiable,
+        # relevant people present in the initial scan.
         unnamed_new_links = valid_profile_links - processed - named_profile_links
-        # LinkedIn frequently duplicates or re-renders links during hydration.
-        # A raw anchor-count change is NOT a new person and used to trap
-        # searches on the same page indefinitely. Compare normalized, visible
-        # profile URLs instead, so only genuinely uninspected people keep
-        # the cursor on the current page.
-        try:
-            final_urls = {
-                normalized
-                for href in anchors.evaluate_all("""nodes => nodes
-                  .filter(a => a.getClientRects().length > 0 &&
-                               getComputedStyle(a).visibility !== 'hidden')
-                  .map(a => a.getAttribute('href') || '')""")
-                if (normalized := normalize_profile(href))
-            }
-        except AttributeError:
-            # Compatibility with lightweight browser/test adapters that only
-            # implement count() and nth(); real Playwright always offers
-            # evaluate_all(). Preserve the old conservative safeguard here.
-            result_list_changed = anchors.count() != anchor_count
-        except Exception:
-            # A failed Playwright snapshot is not a clean scan.
-            result_list_changed = True
-        else:
-            # A newly rendered link to a previously completed member is
-            # already known: only genuinely uninspected URLs require revisiting.
-            result_list_changed = bool(final_urls - valid_profile_links - processed)
-        if result_list_changed:
-            notify(f"Results for '{search}' changed during inspection; "
-                   f"retaining page {page_no} to inspect newly loaded profiles.")
-        elif extraction_errors:
-            notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
-                   "keeping this page for another attempt.")
-        elif unnamed_new_links:
-            notify(f"{len(unnamed_new_links)} new profile link(s) on page {page_no} "
-                   "lack identifiable names; retaining the page rather than dropping them.")
-        elif valid_profile_links:
-            # Every nonprocessed link is named, or all links were processed.
+        if extraction_errors or unnamed_new_links:
+            notify(
+                f"Page {page_no} for '{search}' had {extraction_errors} unreadable card(s) "
+                f"and {len(unnamed_new_links)} link(s) without verified names. "
+                "Not revisiting this search page automatically."
+            )
+        if valid_profile_links:
             store.set_setting(key, page_no + 1)
-            # Keep the prefetched snapshot in sync if a caller repeats a
-            # search phrase in one discovery pass.
             saved_pages[key] = str(page_no + 1)
         else:
-            notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
-        # Count unique profiles, not repeated anchors. A member whose second
-        # link produced a valid candidate must not be reported as rejected.
+            # An unexpected page layout with zero usable member links must
+            # not trigger endless rediscovery of the same page.
+            # Avoid guessing that unrelated profile anchors are people.
+            store.set_setting(key, 16)
+            saved_pages[key] = "16"
+            notify(f"No usable profile links found for '{search}' on page {page_no}; "
+                   "stopping discovery for this phrase instead of rescanning.")
+        # Report only information gathered during the single scan, without
+        # performing another DOM-wide snapshot.
         accepted_urls = {candidate[0] for candidate in candidates}
         diagnostics = (
             f"{len(valid_profile_links)} distinct visible profile links; "
