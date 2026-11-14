@@ -932,7 +932,6 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             searches = unique_phrases(config["searches"])
             match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
-            cursor_keys = ["page:" + term for term in searches]
             # These are only deferred in memory. A manual restart can retry
             # them, but one campaign run never reopens failed search pages.
             deferred_searches = set()
