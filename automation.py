@@ -423,14 +423,19 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   .map(a => a.getAttribute('href') || '')""")
                 if (normalized := normalize_profile(href))
             }
+        except AttributeError:
+            # Compatibility with lightweight browser/test adapters that only
+            # implement count() and nth(); real Playwright always offers
+            # evaluate_all(). Preserve the old conservative safeguard here.
+            result_list_changed = anchors.count() != anchor_count
         except Exception:
-            # If the final snapshot cannot be verified, don't falsely
-            # conclude that all visible members were inspected.
-            final_urls = None
-        result_list_changed = final_urls is None or bool(final_urls - valid_profile_links)
+            # A failed Playwright snapshot is not a clean scan.
+            result_list_changed = True
+        else:
+            result_list_changed = bool(final_urls - valid_profile_links)
         if result_list_changed:
-            notify(f"New profile links appeared (or verification failed) for '{search}' "
-                   f"during inspection; retaining page {page_no} for another pass.")
+            notify(f"Results for '{search}' changed during inspection; "
+                   f"retaining page {page_no} to inspect newly loaded profiles.")
         elif extraction_errors:
             notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
                    "keeping this page for another attempt.")
