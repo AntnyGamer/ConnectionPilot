@@ -283,7 +283,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.setting('page:policy', '1'), '1')
         self.assertIn('navigated away during inspection', ' '.join(messages))
 
-    def test_repeated_search_phrase_still_advances_cursor_each_time(self):
+    def test_repeated_search_phrases_are_loaded_once(self):
         class Anchor:
             def is_visible(self, **kwargs): return True
             def get_attribute(self, key): return '/in/same-person/'
@@ -310,9 +310,9 @@ class QueueTests(unittest.TestCase):
                                 threading.Event(), lambda _: None, 200,
                                 {'min_score':25})
         self.assertEqual(added, 1)
-        self.assertEqual(self.store.setting('page:policy'), '3')
+        self.assertEqual(self.store.setting('page:policy'), '2')
         self.assertIn('page=1', page.visited[0])
-        self.assertIn('page=2', page.visited[1])
+        self.assertEqual(len(page.visited), 1)
 
     def test_generic_action_links_do_not_trigger_repeated_page_scans(self):
         """Unidentified action links are never queued or revisited automatically."""
