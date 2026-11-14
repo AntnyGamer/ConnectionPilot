@@ -231,6 +231,25 @@ class WorkerRecoveryTests(unittest.TestCase):
             collect.assert_not_called()
         self.assertEqual(self.store.total_attempts(), 0)
 
+    def test_exhausted_discovery_skips_feed_and_browser_entirely(self):
+        self.store.set_setting('page:political science', '16')
+        with patch('automation.collect_results') as collect:
+            self.assertEqual(self.run_fake(), 0)
+        collect.assert_not_called()
+        self.page.goto.assert_not_called()
+        self.context.chromium.launch_persistent_context.assert_not_called()
+
+    def test_exhausted_search_still_processes_existing_queue(self):
+        self.store.set_setting('page:political science', '16')
+        url = 'https://www.linkedin.com/in/queued-when-exhausted/'
+        self.store.add(url, 'Queued When Exhausted', 'public policy', 25)
+        with patch('automation.send_one', side_effect=StopRun('checked')) as send:
+            self.run_fake()
+        send.assert_called_once()
+        # The queued profile is a legitimate reason to launch the browser.
+        self.page.goto.assert_called_once()
+        self.context.chromium.launch_persistent_context.assert_called_once()
+
     def test_one_remaining_discovery_page_still_runs(self):
         self.config['searches'].append('government')
         self.store.set_setting('page:political science', '16')
