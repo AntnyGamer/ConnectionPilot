@@ -167,14 +167,21 @@ class BrandingTests(unittest.TestCase):
         app.events = queue.Queue()
         app.root = MagicMock()
         app.status = MagicMock()
-        app.put_log = MagicMock()
+        app.put_logs = MagicMock()
         for index in range(main.MAX_UI_EVENTS_PER_TICK + 7):
             app.events.put(("status", f"Event {index}"))
         app.pump()
-        self.assertEqual(app.put_log.call_count, main.MAX_UI_EVENTS_PER_TICK)
+        app.put_logs.assert_called_once_with(
+            [f"Event {i}" for i in range(main.MAX_UI_EVENTS_PER_TICK)])
+        app.status.set.assert_called_with(
+            f"Event {main.MAX_UI_EVENTS_PER_TICK - 1}")
         self.assertEqual(app.events.qsize(), 7)
         app.root.after.assert_called_once_with(25, app.pump)
+        app.put_logs.reset_mock()
         app.pump()
+        app.put_logs.assert_called_once_with([
+            f"Event {i}" for i in range(main.MAX_UI_EVENTS_PER_TICK,
+                                        main.MAX_UI_EVENTS_PER_TICK + 7)])
         self.assertEqual(app.events.qsize(), 0)
         app.root.after.assert_called_with(250, app.pump)
 
