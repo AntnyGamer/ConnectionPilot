@@ -361,6 +361,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                             .pathname.toLowerCase().replace(/\\/$/, '');
                           for (let n = el.parentElement, depth = 0;
                                n && depth < 6; n = n.parentElement, depth++) {
+                            // A search-page heading must never be borrowed as
+                            // a person's name when a card itself has no name.
+                            if (n.matches('main, [role="main"]')) break;
+                            if (n.querySelector('aside, [role="complementary"]')) break;
                             const links = Array.from(n.querySelectorAll('a[href*="/in/"]'));
                             if (links.some(a => new URL(
                                   a.getAttribute('href') || '', 'https://www.linkedin.com')
