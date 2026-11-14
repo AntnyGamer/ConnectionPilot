@@ -204,7 +204,8 @@ def reject_denied_page(response):
             f"LinkedIn denied or limited page access (HTTP {code}); stop automated access")
 
 
-def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None, pause_event=None):
+def collect_results(page, store, searches, match_terms, stop_event, notify, target,
+                    filters=None, pause_event=None, deferred_searches=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     added = 0
@@ -224,6 +225,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Terminal candidates cannot change during discovery. Load them once
     # rather than querying all completed profiles per search phrase.
     processed = store.processed_urls()
+    # Repeated or case-varied phrases should never cause duplicate page
+    # navigations, even when a non-UI caller passes such a list.
+    searches = unique_phrases(searches)
     saved_pages = store.settings_for(["page:" + search for search in searches])
     for search in searches:
         if stop_event.is_set():
@@ -249,7 +253,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # Never retry a timeout until protection is checked first.
             check_protection(page)
             notify(f"Search page {page_no} for '{search}' timed out; "
-                   "keeping its cursor and trying other searches.")
+                   "skipping it for the rest of this run; no automatic retry.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         reject_denied_page(response)
         # An ordinary redirect or temporary server error is not evidence of
@@ -258,12 +264,16 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         check_protection(page)
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
             notify(f"LinkedIn redirected the search for '{search}'; leaving page {page_no} "
-                   "pending and trying other search phrases.")
+                   "pending until the next manually started run.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         code = getattr(response, "status", None)
         if isinstance(code, int) and 500 <= code <= 599:
             notify(f"LinkedIn returned a temporary server error (HTTP {code}) for "
-                   f"'{search}'; keeping page {page_no} pending.")
+                   f"'{search}'; deferring it until another manually started run.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         # Profile links inside visible main-content search results.
         anchors = page.locator('main a[href*="/in/"]')
@@ -277,14 +287,19 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # A late restriction notice may replace the search results.
                 # Never refresh another LinkedIn page before checking again.
                 check_protection(page)
-                notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
+                notify(f"No profile links appeared for '{search}'; deferring page {page_no} "
+                       "until a manually started run.")
+                if deferred_searches is not None:
+                    deferred_searches.add(search)
                 continue
         # Result hydration may have changed the page or redirected elsewhere.
         # Check again before treating any links as search candidates.
         check_protection(page)
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
             notify(f"LinkedIn redirected the results for '{search}' during loading; "
-                   f"retaining page {page_no} and trying other search phrases.")
+                   f"deferring page {page_no} until another manually started run.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         seen_this_page = set()
         # Skip already processed people without extracting their card content.
@@ -406,9 +421,11 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         check_protection(page)
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
             notify(f"Results for '{search}' navigated away during inspection; "
-                   f"retaining page {page_no} without saving unrelated profiles.")
+                   f"deferring page {page_no} without saving unrelated profiles.")
             if paused_during_page:
                 return added
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         added_this_search = 0
         if candidates:
@@ -916,6 +933,9 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
             cursor_keys = ["page:" + term for term in searches]
+            # These are only deferred in memory. A manual restart can retry
+            # them, but one campaign run never reopens failed search pages.
+            deferred_searches = set()
             while not stop_event.is_set():
                 if pause_event.is_set():
                     wait_or_stop(2, stop_event, pause_event, notify)
@@ -946,8 +966,11 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 profile = store.next_profile()
                 if not profile:
                     notify("Finding new matching professionals…")
-                    before_values = store.settings_for(cursor_keys)
-                    before_pages = [before_values.get(key, "1") for key in cursor_keys]
+                    active_searches = [search for search in searches
+                                       if search not in deferred_searches]
+                    active_cursor_keys = ["page:" + search for search in active_searches]
+                    before_values = store.settings_for(active_cursor_keys)
+                    before_pages = [before_values.get(key, "1") for key in active_cursor_keys]
                     # Once all search cursors exceed the built-in 15-page
                     # ceiling there is no useful retry: discovery would never
                     # visit another result page until searches are changed.
@@ -956,17 +979,18 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                             return int(value) > 15
                         except (TypeError, ValueError, OverflowError):
                             return False
-                    if searches and all(exhausted_cursor(value) for value in before_pages):
-                        raise StopRun("All searches reached the 15-page discovery limit. "
-                                      "Add or change search phrases to restart discovery.")
-                    new_count = collect_results(page, store, searches, match_terms, stop_event, notify,
-                                                config["target"], filters, pause_event)
+                    if not active_searches or all(exhausted_cursor(value) for value in before_pages):
+                        raise StopRun("No further search pages remain for this run. "
+                                      "Failed pages were not retried automatically.")
+                    new_count = collect_results(page, store, active_searches, match_terms,
+                                                stop_event, notify, config["target"],
+                                                filters, pause_event, deferred_searches)
                     on_update()
                     if pause_event.is_set():
                         continue
                     if not new_count:
-                        after_values = store.settings_for(cursor_keys)
-                        after_pages = [after_values.get(key, "1") for key in cursor_keys]
+                        after_values = store.settings_for(active_cursor_keys)
+                        after_pages = [after_values.get(key, "1") for key in active_cursor_keys]
                         if after_pages != before_pages:
                             # Proceed to new pages, but do not revisit an
                             # inspected page just because it had no matches.
