@@ -215,6 +215,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     if remaining_goal == 0:
         return 0
     queue_threshold = min(30, remaining_goal)
+    # The same worker owns discovery for this run. Queue inserts are batched
+    # below, so we can maintain the exact count locally instead of executing
+    # another count query after every search page.
+    queued_total = store.queued_count()
+    if queued_total >= queue_threshold:
+        return 0
     added = 0
     settings = filters or {}
     # Matching terms and settings do not change during this discovery pass.
@@ -437,6 +443,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # preserve candidates already inspected on the search page.
             added_this_search = store.add_many(candidates)
             added += added_this_search
+            queued_total += added_this_search
         # Search results can mutate after the initial snapshot. Reopening
         # this page to chase later cards caused repeated navigations and
         # unnecessary account activity. Complete at most one navigation for
@@ -479,7 +486,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         if pause_event is not None and pause_event.is_set():
             return added
         # Stop once we have enough to process for the current day; later passes discover more.
-        if store.queued_count() >= queue_threshold:
+        if queued_total >= queue_threshold:
             break
     return added
 
