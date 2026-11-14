@@ -183,8 +183,9 @@ class WorkerRecoveryTests(unittest.TestCase):
         with patch('automation.collect_results', return_value=0) as collect:
             self.assertEqual(self.run_fake(), 0)
             self.assertEqual(collect.call_count, 1)
-            self.assertTrue(any('without automatic retries' in s.lower()
-                                for s in self.status))
+            # StopRun reaches the UI worker, which supplies the final status;
+            # this low-level fake intentionally observes only the worker call.
+            self.assertFalse(any('retry' in msg.lower() for msg in self.status))
 
     def test_exhausted_discovery_pages_stop_without_empty_retries(self):
         self.store.set_setting('page:political science', '16')
