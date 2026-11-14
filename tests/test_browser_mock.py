@@ -554,6 +554,95 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(added, 1)
         self.assertEqual(self.db.setting('page:policy'), '2')
 
+    def test_new_previously_processed_link_does_not_hold_search_page(self):
+        # LinkedIn may render an extra known member link between the scan
+        # and final snapshot. Such a link requires no further inspection.
+        known = 'https://www.linkedin.com/in/previously-processed/'
+        self.db.add(known, 'Previously Processed', 'public policy', 25)
+        self.db.mark(known, 'skipped', 'Already connected')
+        doc = """<html><body><main>
+          <div><a href='/in/jane-example/'>Jane Example</a>
+          <p>Government public policy analyst in New Jersey</p></div>
+          </main></body></html>"""
+
+        class InjectKnownLink:
+            def __init__(self, locator, browser):
+                self.locator, self.browser = locator, browser
+
+            def count(self):
+                return self.locator.count()
+
+            def nth(self, index):
+                return self.locator.nth(index)
+
+            def evaluate_all(self, script):
+                self.browser.evaluate("""() => {
+                    document.querySelector('main').insertAdjacentHTML(
+                        'beforeend',
+                        "<a href='/in/previously-processed/'>Previously Processed</a>"
+                    );
+                }""")
+                return self.locator.evaluate_all(script)
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def locator(self, selector):
+                locator = self.browser.locator(selector)
+                if selector == 'main a[href*="/in/"]':
+                    return InjectKnownLink(locator, self.browser)
+                return locator
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 1)
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_discovery_reports_reasons_for_not_queuing_links(self):
+        doc = """<html><body><main>
+          <div><a href='/in/matched-person/'>Matched Person</a>
+          <p>Government policy analyst</p></div>
+          <div><a href='/in/score-miss/'>Score Miss</a>
+          <p>Works in food service</p></div>
+          <div><a href='/in/excluded-person/'>Excluded Person</a>
+          <p>Policy analyst in crypto sales</p></div>
+          <div><a href='/in/degree-miss/'>Degree Miss</a>
+          <p>3rd degree connection, public policy analyst</p></div>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        messages = []
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), messages.append, 200,
+                                {'min_score': 25, 'degree': '2nd only', 'exclude': 'crypto'})
+        self.assertEqual(added, 1)
+        message = ' '.join(messages)
+        self.assertIn('1 below match score', message)
+        self.assertIn('1 excluded by keyword', message)
+        self.assertIn('1 filtered by degree', message)
+        self.assertIn('4 distinct visible profile links', message)
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
     def test_generic_link_does_not_mask_valid_name_for_same_profile(self):
         doc = """<html><body><main>
           <div><a href='/in/jane-example/'>View profile</a>
