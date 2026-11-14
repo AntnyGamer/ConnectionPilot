@@ -515,6 +515,21 @@ class App:
             STORE.reset_search_pages([*prior_searches, *searches])
             searches_reset = True
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
+        if previous_searches is not None and not searches_reset:
+            # The cursor key uses the displayed phrase. Changing only case
+            # must move its progress rather than silently reread page one.
+            old_spellings = {
+                term.casefold(): term
+                for term in unique_phrases(previous_searches.splitlines())
+            }
+            case_changes = [
+                (old_spellings[term.casefold()], term)
+                for term in searches
+                if term.casefold() in old_spellings
+                and old_spellings[term.casefold()] != term
+            ]
+            if case_changes:
+                STORE.rename_search_pages(case_changes)
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
         # Reordering/capitalizing equivalent terms cannot change matching:
