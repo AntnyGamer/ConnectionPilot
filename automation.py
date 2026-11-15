@@ -204,6 +204,18 @@ def reject_denied_page(response):
             f"LinkedIn denied or limited page access (HTTP {code}); stop automated access")
 
 
+def _validated_minimum_score(filters):
+    """Validate matching before opening any LinkedIn page."""
+    raw = (filters or {}).get("min_score", 1)
+    try:
+        score = int(raw)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("Invalid profile minimum score") from exc
+    if not 0 <= score <= 100:
+        raise ValueError("Invalid profile minimum score")
+    return score
+
+
 def collect_results(page, store, searches, match_terms, stop_event, notify, target,
                     filters=None, pause_event=None, deferred_searches=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
@@ -215,15 +227,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     if remaining_goal == 0:
         return 0
     settings = filters or {}
-    # Validate before the first network request. A malformed score must not
-    # be treated as a card-extraction problem that advances a search cursor.
-    raw_score = settings.get("min_score", 1)
-    try:
-        minimum_score = int(raw_score)
-    except (ValueError, TypeError, OverflowError) as exc:
-        raise ValueError("Invalid profile minimum score") from exc
-    if not 0 <= minimum_score <= 100:
-        raise ValueError("Invalid profile minimum score")
+    # Fail before the first search request. The campaign worker also checks
+    # this setting before opening the initial LinkedIn feed/profile page.
+    minimum_score = _validated_minimum_score(settings)
     queue_threshold = min(30, remaining_goal)
     # The same worker owns discovery for this run. Queue inserts are batched
     # below, so we can maintain the exact count locally instead of executing
@@ -912,6 +918,10 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     match_terms = unique_phrases(config["match_terms"])
     if not searches or not match_terms:
         raise StopRun("Search and matching phrases must be set before opening LinkedIn.")
+    try:
+        _validated_minimum_score(config.get("filters"))
+    except ValueError as exc:
+        raise StopRun("Invalid minimum match score; no LinkedIn page was loaded.") from exc
     initial_cursor_values = _read_initial_search_cursors(store, searches)
     if (initial_cursor_values is not None and searches and
             all(_cursor_exhausted(initial_cursor_values.get("page:" + s, "1"))
