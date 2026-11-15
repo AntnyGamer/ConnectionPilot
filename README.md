@@ -1,8 +1,8 @@
 <img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="96" />
 
-# ConnectionPilot v1.1.1 — Windows
+# ConnectionPilot v1.1.2 — Windows
 
-**Version: v1.1.1.** App, Windows EXE metadata and GitHub release tag use this same version. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
+**Version: v1.1.2.** The app, Windows EXE metadata and proposed GitHub release tag share this version. A draft PR does not create a public release. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
 
 ## Important limitations
 
@@ -45,8 +45,8 @@ Keywords separated by commas represent alternatives (OR) within one field; activ
 - The application prevents a second copy from starting against the same data folder, so two sessions cannot select and invite the same candidate simultaneously.
 - Pressing **Pause** before a sending action begins prevents that action. A second pause/stop check prevents the final confirmation click if a dialog is open; the candidate stays under **Unconfirmed**. An action that was already clicked may still finish. Stop/pause does not override LinkedIn's restrictions.
 - It halts on recognized verification, invitation-limit or restriction screens; it does not solve challenges. Normal invitation confirmation modals are handled automatically when their controls are unambiguous; unsupported relationship or email verification is skipped without asking you to click. This does not guarantee unattended operation if LinkedIn logs you out or presents a mandatory challenge.
-- Ordinary search redirects, temporary HTTP 5xx errors, and search-page navigation timeouts skip only the affected search phrase for that discovery pass, retain its page cursor, and continue to other search phrases. After a timeout, the app checks for a restriction notice before continuing. It never treats redirected feed links as search candidates. LinkedIn HTTP 403, 429 and 999 access-denial or rate-limit responses still stop the campaign rather than retrying through blocked access.
-- Search-page extraction failures do not cause a partial page to be marked as complete. Empty search pages are retried rather than assumed exhausted; pages with visible but nonmatching candidates advance to the next page.
+- Ordinary search redirects, temporary HTTP 5xx errors, and search-page navigation timeouts defer the affected phrase **for the rest of the current run**, keep its saved page cursor for a future manually started run, and let other phrases continue. After a timeout, the app checks for a restriction notice before continuing. Redirected feed links are never treated as candidates. LinkedIn HTTP 401, 403, 429 and 999 responses stop the campaign instead of retrying blocked access.
+- Each successfully loaded results page is scanned once: unreadable cards or names are reported, but do **not** automatically trigger another page visit. Pages containing profile links advance even when some results are unreadable or irrelevant. A page with no usable profile links stops discovery for that phrase instead of reopening it automatically; a results page with no attached links is deferred after a single short wait.
 - A previously processed profile is ignored when it reappears in another search result; queued profiles may still be rescored. Search cards are used to reject explicit first-degree connections, excluded keywords and explicit third-degree connections when a second-degree-only filter is selected. Unknown details are verified on the actual profile, not guessed.
 - A navigation/inspection error before clicking does **not** trigger automatic reloading of the same profile. The candidate is safely skipped without recording an invitation, and you can explicitly requeue it later using **Retry safe skips**. This reduces redundant profile views, but does not make unattended automation acceptable to LinkedIn.
 - An explicit LinkedIn restriction heading halts the campaign immediately, even on a long page. This avoids continuing after a detected restriction, but is not a guarantee that all restriction layouts will be recognized.
@@ -74,7 +74,7 @@ Tests use simulated LinkedIn pages, not an authenticated LinkedIn account. A pas
 
 ## Reliability fixes in this v1 build
 - A pre-click profile inspection failure is skipped without automatically reloading the same member. **Retry safe skips** permits deliberate reinspection, while potentially sent invitations are never automatically retried.
-- Empty search pages are retried twice with a delay before discovery stops.
+- Stalled discovery stops without automatic retry cycles. Failed search phrases are deferred for the remainder of the run instead of repeatedly reopening the same page.
 - The last invitation attempt is selected by offset-aware chronological time, so clock fall-back and imported records cannot pick an older invitation.
 - A session that redirects to LinkedIn login/authwall is now recognized as a halt condition rather than continuing through other profiles.
 
@@ -89,13 +89,13 @@ Tests use simulated LinkedIn pages, not an authenticated LinkedIn account. A pas
 
 - The launcher resolves dependency and program paths from its own folder, even if started from a different working directory.
 - When a candidate appears in more than one search, a stronger match updates the queued candidate's score and summary without changing their name, attempt state, or original discovery time.
-- Pause also stops search-result collection before the next candidate is inspected. If paused partway through a page, that page remains pending; already queued profiles are deduplicated on resume.
+- If Pause arrives while a search-results page is already being inspected, the app finishes reading that loaded page and advances its saved cursor before pausing. It does not open the next page until Resume, avoiding a duplicate page navigation; Pause can take slightly longer to take effect during local card inspection.
 
 Additional checks in this v1 build:
 
 - A delayed invitation-confirmation dialog will not be submitted after the configured sending window closes or the daily attempt cap is exceeded. The earlier Connect action remains in the attempt ledger to avoid duplicate retries.
 - Malformed or out-of-range saved goal/cap values recover to documented defaults on startup, without changing valid saved values.
-- Search results containing only generic action links are not treated as successfully identified people; the page is retained for another inspection rather than silently skipped.
+- Search results containing only generic action links are not treated as identified people. The app does not revisit those results automatically just to resolve unreadable names; this may miss candidates but avoids additional LinkedIn requests.
 
 These corrections do **not** establish live-site compatibility or create an approved invitation rate.
 
@@ -174,7 +174,7 @@ icons for existing taskbar pins; an old pin may retain an earlier image. The
 GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
 that GitHub setting.
-The displayed version is **v1.1.1**.
+The displayed version is **v1.1.2**.
 When that version's release tag already exists, a later successful main-branch build leaves the immutable published release untouched; the fresh compiled EXE is still available as a GitHub Actions build artifact. Publishing a new release requires intentionally updating the version and tag.
 
 The repo also contains a **Windows-only** GitHub Actions build at
@@ -183,7 +183,7 @@ that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
 embeds the icon and version metadata, and tests the actual executable's
 startup, bundled resources, timezone data, local SQLite storage and offline
 Chrome/Edge launch from a clean profile before publishing the build artifact. Download
-`ConnectionPilot-v1.1.1-Windows-EXE` from the successful workflow's Artifacts.
+`ConnectionPilot-v1.1.2-Windows-EXE` from the successful workflow's Artifacts.
 This is an unsigned executable and Windows SmartScreen may warn; no code
 signing certificate is bundled. The executable uses Chrome/Edge for Google
 sign-in and needs the relevant browser available on your PC.
@@ -203,8 +203,8 @@ Eastern-time schedule even on Windows computers without system IANA data.
 After a successful Windows build on a commit merged to `main`, GitHub Actions
 publishes the verified `ConnectionPilot.exe`, its SHA-256 checksum, and the matching PNG and ICO logo assets on the
 [latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
-Download the EXE from the release page; this release is **v1.1.1**.
-The release tag is `v1.1.1`, bound to the merge commit's verified source.
+After the v1.1.2 code is merged into `main` and its verified Windows build succeeds, the workflow publishes **v1.1.2**. Until then, the latest public release may still be v1.1.1.
+The future release tag is `v1.1.2`, bound to the verified source commit on `main`. PR builds do not publish this tag.
 The workflow refuses to replace an existing release with a different binary. Pull request builds run checks and produce test artifacts but
 **never** publish a public release. Publishing uses a write-scoped token only
 after a successful Windows test/build job.

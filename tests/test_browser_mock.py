@@ -443,7 +443,7 @@ class BrowserMockTests(unittest.TestCase):
                                 threading.Event(), lambda _: None, 200)
         self.assertEqual(added, 0)
         self.assertIsNone(self.db.next_profile())
-        self.assertEqual(self.db.setting('page:government', '1'), '1')
+        self.assertEqual(self.db.setting('page:government'), '2')
 
     def test_profile_filters_before_invitation(self):
         doc = html('''<p>Public Policy Analyst in New Jersey</p>
@@ -505,6 +505,294 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(added, 0)
         self.assertEqual(self.db.setting('page:political science'), '2')
 
+    def test_discovery_does_not_recount_or_recheck_search_page(self):
+        # The only member URL snapshot is the initial card scan. There is
+        # no second DOM pass even when the result list might mutate.
+        doc = """<html><body><main><div>
+          <a href='/in/jane-example/'>Jane Example</a>
+          <p>Government public policy analyst in New Jersey</p>
+          </div></main></body></html>"""
+
+        class Anchors:
+            def __init__(self, locator):
+                self.locator = locator
+                self.count_calls = 0
+
+            def count(self):
+                self.count_calls += 1
+                if self.count_calls > 1:
+                    raise AssertionError("Discovery repeated its anchor scan")
+                return self.locator.count()
+
+            def nth(self, index):
+                return self.locator.nth(index)
+
+            def evaluate_all(self, script):
+                raise AssertionError("Discovery performed an extra DOM-wide scan")
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+                self.anchors = None
+                self.visits = 0
+
+            def goto(self, *args, **kwargs):
+                self.visits += 1
+                self.browser.set_content(doc)
+
+            def locator(self, selector):
+                loc = self.browser.locator(selector)
+                if selector == 'main a[href*="/in/"]':
+                    if self.anchors is None:
+                        self.anchors = Anchors(loc)
+                    return self.anchors
+                return loc
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        page = SearchPage(self.page)
+        added = collect_results(page, self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 1)
+        self.assertEqual(page.visits, 1)
+        self.assertEqual(page.anchors.count_calls, 1)
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_discovery_reports_reasons_for_not_queuing_links(self):
+        doc = """<html><body><main>
+          <div><a href='/in/matched-person/'>Matched Person</a>
+          <p>Government policy analyst</p></div>
+          <div><a href='/in/score-miss/'>Score Miss</a>
+          <p>Works in food service</p></div>
+          <div><a href='/in/excluded-person/'>Excluded Person</a>
+          <p>Policy analyst in crypto sales</p></div>
+          <div><a href='/in/degree-miss/'>Degree Miss</a>
+          <p>3rd degree connection, public policy analyst</p></div>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        messages = []
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), messages.append, 200,
+                                {'min_score': 25, 'degree': '2nd only', 'exclude': 'crypto'})
+        self.assertEqual(added, 1)
+        message = ' '.join(messages)
+        self.assertIn('1 below match score', message)
+        self.assertIn('1 excluded by keyword', message)
+        self.assertIn('1 filtered by degree', message)
+        self.assertIn('4 distinct visible profile links', message)
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_generic_profile_link_does_not_trigger_extra_name_recovery(self):
+        doc = """<html><body><main><div class='result'>
+          <a href='/in/jane-example/' aria-label='View profile'>View profile</a>
+          <h3>Jane Example</h3><p>Government public policy analyst</p>
+          </div></main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_generic_profile_link_with_ambiguous_headings_stays_unread(self):
+        doc = """<html><body><main><div>
+          <a href='/in/jane-example/'>View profile</a>
+          <h3>Jane Example</h3><h3>Someone Else</h3>
+          <p>Government public policy analyst</p>
+          </div></main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_hidden_search_card_does_not_trigger_extra_waits_or_scans(self):
+        # A placeholder is never a verified card. Skip this phrase rather
+        # than repeatedly navigating to a page with no visible members.
+        doc = """<html><body><main>
+          <div hidden>
+            <a href='/in/jane-example/'>Jane Example</a>
+            <p>Government public policy analyst</p>
+          </div></main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+                self.visits = 0
+
+            def goto(self, *args, **kwargs):
+                self.visits += 1
+                self.browser.set_content(doc)
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        page = SearchPage(self.page)
+        added = collect_results(page, self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertEqual(page.visits, 1)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy'), '16')
+
+    def test_sparse_search_card_respects_explicit_score_threshold(self):
+        # Do not silently increase automated profile inspections by
+        # overriding a user's relevance threshold on name-only cards.
+        doc = """<html><body><main>
+          <a href='/in/jane-example/'>Jane Example</a>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        page = SearchPage(self.page)
+        messages = []
+        strict = collect_results(page, self.db, ['policy'], ['policy'],
+                                 threading.Event(), messages.append, 200,
+                                 {'min_score': 25})
+        self.assertEqual(strict, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertIn('1 below match score', ' '.join(messages))
+
+        # Score 0 is already the explicit opt-in for broad discovery.
+        self.db.reset_search_pages(['policy'])
+        broad = collect_results(page, self.db, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 200,
+                                {'min_score': 0})
+        self.assertEqual(broad, 1)
+        self.assertEqual(self.db.next_profile()['score'], 0)
+
+    def test_named_connect_action_link_is_never_used_as_identity(self):
+        doc = """<html><body><main><div>
+          <a href='/in/jane-example/'>Connect with Jane Example</a>
+          <p>Government public policy analyst</p>
+          </div></main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_generic_link_does_not_borrow_search_page_heading_as_name(self):
+        doc = """<html><body><main>
+          <h1>People</h1>
+          <div><a href='/in/jane-example/'>View profile</a></div>
+          <p>Government public policy analyst</p>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, name):
+                return getattr(self.browser, name)
+
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 200)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
+    def test_search_page_heading_does_not_inflate_profile_match_score(self):
+        # The sole search result is an unrelated chef, but the search page's
+        # heading contains "government policy". That heading is not evidence
+        # that the chef works in public policy.
+        doc = """<html><body><main>
+          <h1>Government policy search results</h1>
+          <div><a href='/in/jane-example/'>Jane Example</a>
+               <p>Chef in a restaurant</p></div>
+          </main></body></html>"""
+
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+
+            def __init__(self, browser):
+                self.browser = browser
+
+            def goto(self, *args, **kwargs):
+                self.browser.set_content(doc)
+
+            def __getattr__(self, key):
+                return getattr(self.browser, key)
+
+        messages = []
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), messages.append, 200,
+                                {'min_score': 25})
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertIn('1 below match score', ' '.join(messages))
+        self.assertEqual(self.db.setting('page:policy'), '2')
+
     def test_generic_link_does_not_mask_valid_name_for_same_profile(self):
         doc = """<html><body><main>
           <div><a href='/in/jane-example/'>View profile</a>
@@ -521,7 +809,7 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(added, 1)
         self.assertEqual(self.db.next_profile()['name'], 'Jane Example')
 
-    def test_search_read_failure_does_not_advance_page(self):
+    def test_search_read_failure_does_not_repeat_page(self):
         doc = '<html><body><main><a href="/in/test-person/">Test Person</a></main></body></html>'
         class BrokenAnchor:
             def __init__(self, anchor): self.anchor = anchor
@@ -542,7 +830,7 @@ class BrowserMockTests(unittest.TestCase):
         result = collect_results(BrokenPage(self.page), self.db, ['government'], ['government'],
                                  threading.Event(), lambda _: None, 200)
         self.assertEqual(result, 0)
-        self.assertEqual(self.db.setting('page:government', '1'), '1')
+        self.assertEqual(self.db.setting('page:government'), '2')
 
     def test_send_without_note(self):
         doc = html('''<button id="c" onclick="document.getElementById('d').hidden=false">Connect</button>''', '''
@@ -684,9 +972,12 @@ class BrowserMockTests(unittest.TestCase):
                 return getattr(self.browser, name)
         page = RedirectedPage(self.page)
         messages = []
+        deferred = set()
         self.assertEqual(collect_results(page, self.db, ['policy', 'government'],
-                         ['policy'], threading.Event(), messages.append, 100), 1)
+                         ['policy'], threading.Event(), messages.append, 100,
+                         deferred_searches=deferred), 1)
         self.assertEqual(len(page.visits), 2)
+        self.assertEqual(deferred, {'policy'})
         self.assertEqual(self.db.setting('page:policy', '1'), '1')
         self.assertEqual(self.db.setting('page:government'), '2')
         self.assertEqual(self.db.next_profile()['url'],
@@ -710,10 +1001,13 @@ class BrowserMockTests(unittest.TestCase):
                 return getattr(self.browser, name)
         page = SearchPage(self.page)
         messages = []
+        deferred = set()
         added = collect_results(page, self.db, ['policy', 'government'], ['policy'],
-                                threading.Event(), messages.append, 100)
+                                threading.Event(), messages.append, 100,
+                                deferred_searches=deferred)
         self.assertEqual(added, 1)
         self.assertEqual(len(page.visits), 2)
+        self.assertEqual(deferred, {'policy'})
         self.assertEqual(self.db.setting("page:policy", "1"), "1")
         self.assertEqual(self.db.setting("page:government"), "2")
         self.assertIn("timed out", " ".join(messages))
@@ -759,10 +1053,13 @@ class BrowserMockTests(unittest.TestCase):
             def __getattr__(self, name):
                 return getattr(self.browser, name)
         page = ServerErrorPage(self.page)
+        deferred = set()
         count = collect_results(page, self.db, ['policy', 'government'], ['policy'],
-                                threading.Event(), lambda _: None, 100)
+                                threading.Event(), lambda _: None, 100,
+                                deferred_searches=deferred)
         self.assertEqual(count, 1)
         self.assertEqual(page.visits, 2)
+        self.assertEqual(deferred, {'policy'})
         self.assertEqual(self.db.setting('page:policy', '1'), '1')
         self.assertEqual(self.db.setting('page:government'), '2')
 
@@ -989,41 +1286,33 @@ class BrowserMockTests(unittest.TestCase):
         result, reason = self.run_mock(doc)
         self.assertEqual(result, 'sent', reason)
 
-    def test_readable_new_profile_does_not_hide_other_unnamed_new_profile(self):
-        first = """<html><body><main>
+    def test_mixed_named_and_unnamed_results_do_not_repeat_search_page(self):
+        doc = """<html><body><main>
             <div><a href='/in/known-new/'>Known New</a>
                 <p>Policy analyst in government</p></div>
             <div><a href='/in/unnamed-new/'>View profile</a></div>
             </main></body></html>"""
-        second = """<html><body><main>
-            <div><a href='/in/known-new/'>Known New</a>
-                <p>Policy analyst in government</p></div>
-            <div><a href='/in/unnamed-new/'>Unnamed New</a>
-                <p>Policy analyst in government</p></div>
-            </main></body></html>"""
+
         class SearchPage:
             url = 'https://www.linkedin.com/search/results/people/'
             def __init__(self, browser):
                 self.browser = browser
-                self.document = first
+                self.visits = 0
             def goto(self, *args, **kwargs):
-                self.browser.set_content(self.document)
+                self.visits += 1
+                self.browser.set_content(doc)
             def __getattr__(self, key):
                 return getattr(self.browser, key)
+
         page = SearchPage(self.page)
+        messages = []
         added = collect_results(page, self.db, ['policy'], ['policy'],
-                                threading.Event(), lambda _: None, 100)
+                                threading.Event(), messages.append, 100)
         self.assertEqual(added, 1)
-        self.assertEqual(self.db.setting('page:policy', '1'), '1')
-        self.assertEqual(self.db.counts().get('queued'), 1)
-        # When the missing name becomes readable, dedupe the first candidate
-        # and advance after collecting the second one.
-        page.document = second
-        added = collect_results(page, self.db, ['policy'], ['policy'],
-                                threading.Event(), lambda _: None, 100)
-        self.assertEqual(added, 1)
-        self.assertEqual(self.db.counts().get('queued'), 2)
+        self.assertEqual(page.visits, 1)
         self.assertEqual(self.db.setting('page:policy'), '2')
+        self.assertEqual(self.db.counts().get('queued'), 1)
+        self.assertIn('Not revisiting this search page', ' '.join(messages))
 
     def test_processed_generic_link_does_not_mask_new_unnamed_member(self):
         known = 'https://www.linkedin.com/in/known-member/'
@@ -1042,8 +1331,8 @@ class BrowserMockTests(unittest.TestCase):
         added = collect_results(SearchPage(self.page), self.db, ['government'],
                                 ['policy'], threading.Event(), messages.append, 100)
         self.assertEqual(added, 0)
-        self.assertEqual(self.db.setting('page:government', '1'), '1')
-        self.assertIn('lack identifiable names', ' '.join(messages))
+        self.assertEqual(self.db.setting('page:government'), '2')
+        self.assertIn('without verified names', ' '.join(messages))
 
     def test_page_of_only_processed_generic_links_can_advance(self):
         known = 'https://www.linkedin.com/in/known-member/'

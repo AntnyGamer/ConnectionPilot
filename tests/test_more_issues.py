@@ -84,7 +84,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(candidate['name'], 'Updated Queued')
         self.assertEqual(candidate['score'], 75)
 
-    def test_pause_in_discovery_keeps_page_and_resumes_without_duplicates(self):
+    def test_pause_finishes_loaded_page_instead_of_refetching_on_resume(self):
         pause = threading.Event()
         pause_on_first = [True]
 
@@ -93,8 +93,8 @@ class QueueTests(unittest.TestCase):
             def is_visible(self, **kw): return True
             def get_attribute(self, name): return '/in/' + self.slug + '/'
             def evaluate(self, expression):
-                # Pause while inspecting the first result, before the batch
-                # is persisted; next iteration must notice the pause.
+                # Pause while inspecting the first result. Finish the
+                # already-loaded page to avoid fetching it again on resume.
                 if self.slug == 'person-one' and pause_on_first[0]:
                     pause_on_first[0] = False
                     pause.set()
@@ -110,7 +110,8 @@ class QueueTests(unittest.TestCase):
 
         class Page:
             url = 'https://www.linkedin.com/search/results/people/'
-            def goto(self, *a, **kw): pass
+            def __init__(self): self.visited = []
+            def goto(self, url, **kw): self.visited.append(url)
             def wait_for_timeout(self, *a): pass
             def locator(self, selector):
                 if selector == 'main a[href*="/in/"]':
@@ -120,19 +121,29 @@ class QueueTests(unittest.TestCase):
                         first=SimpleNamespace(inner_text=lambda **kw: 'Search results for government professionals'))
                 return empty_locator()
 
-        added = collect_results(Page(), self.store, ['government'], ['policy'],
+        page = Page()
+        added = collect_results(page, self.store, ['government'], ['policy'],
                                 threading.Event(), lambda s: None, 200,
                                 {'min_score':25}, pause)
-        self.assertEqual(added, 1)
-        self.assertEqual(self.store.setting('page:government', '1'), '1')
-        self.assertEqual(self.store.counts().get('queued'), 1)
-        pause.clear()
-        added = collect_results(Page(), self.store, ['government'], ['policy'],
-                                threading.Event(), lambda s: None, 200,
-                                {'min_score':25}, pause)
-        self.assertEqual(added, 1)
-        self.assertEqual(self.store.counts().get('queued'), 2)
+        self.assertEqual(added, 2)
         self.assertEqual(self.store.setting('page:government'), '2')
+        self.assertEqual(self.store.counts().get('queued'), 2)
+        self.assertEqual(len(page.visited), 1)
+        # While paused no new page is loaded.
+        self.assertEqual(collect_results(page, self.store, ['government'], ['policy'],
+                         threading.Event(), lambda s: None, 200,
+                         {'min_score':25}, pause), 0)
+        self.assertEqual(len(page.visited), 1)
+        pause.clear()
+        # On resume, advance to page 2 instead of fetching page 1 again.
+        added = collect_results(page, self.store, ['government'], ['policy'],
+                                threading.Event(), lambda s: None, 200,
+                                {'min_score':25}, pause)
+        self.assertEqual(added, 0)
+        self.assertEqual(len(page.visited), 2)
+        self.assertIn('page=1', page.visited[0])
+        self.assertIn('page=2', page.visited[1])
+        self.assertEqual(self.store.setting('page:government'), '3')
 
     def test_processed_candidates_loaded_once_for_multiple_search_phrases(self):
         from unittest.mock import patch
@@ -157,18 +168,60 @@ class QueueTests(unittest.TestCase):
 
         with patch.object(self.store, 'processed_urls', wraps=self.store.processed_urls) as processed, \
              patch.object(self.store, 'settings_for', wraps=self.store.settings_for) as batched, \
+             patch.object(self.store, 'queued_count', wraps=self.store.queued_count) as queue_reads, \
              patch.object(self.store, 'setting', side_effect=AssertionError('Per-key read')):
             count = collect_results(Page(), self.store,
                                     ['policy', 'government'], ['policy'],
                                     threading.Event(), lambda _: None, 200)
         self.assertEqual(count, 1)
         self.assertEqual(processed.call_count, 1)
+        queue_reads.assert_called_once()
         batched.assert_called_once_with(['page:policy', 'page:government'])
         self.assertEqual(self.store.counts().get('queued'), 1)
 
-    def test_newly_loaded_search_links_keep_page_cursor_until_revisited(self):
-        # Result cards can hydrate after an earlier card has already appeared.
-        # A page must not be marked finished until a stable snapshot is read.
+    def test_ineligible_connection_degree_skips_duplicate_anchor_dom_reads(self):
+        # A result sometimes links to the same person more than once.
+        # Definitive first/third-degree exclusions need only one card read.
+        for degree_text, filters in (
+            ("1st degree connection, public policy analyst", {"min_score": 25}),
+            ("3rd degree connection, public policy analyst",
+             {"min_score": 25, "degree": "2nd only"}),
+        ):
+            with self.subTest(degree_text=degree_text):
+                self.store.reset_search_pages(['policy'])
+                calls = []
+
+                class Anchor:
+                    def is_visible(self, **kwargs): return True
+                    def get_attribute(self, key): return '/in/duplicate-user/'
+                    def inner_text(self, **kwargs): return 'Duplicate User'
+                    def evaluate(self, script):
+                        calls.append(script)
+                        return degree_text
+
+                class Anchors:
+                    def count(self): return 2
+                    def nth(self, index): return Anchor()
+
+                class Page:
+                    url = 'https://www.linkedin.com/search/results/people/'
+                    def goto(self, *args, **kwargs): pass
+                    def locator(self, selector):
+                        if selector == 'main a[href*="/in/"]':
+                            return Anchors()
+                        return empty_locator()
+
+                found = collect_results(
+                    Page(), self.store, ['policy'], ['policy'],
+                    threading.Event(), lambda _: None, 10, filters)
+                self.assertEqual(found, 0)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(self.store.queued_count(), 0)
+                self.assertEqual(self.store.setting('page:policy'), '2')
+
+    def test_late_loaded_search_links_do_not_cause_an_extra_page_scan(self):
+        # Count may change during hydration, but discovery must not
+        # query it twice or navigate back to chase late arrivals.
         class Anchor:
             def __init__(self, slug): self.slug = slug
             def is_visible(self, **kwargs): return True
@@ -177,35 +230,31 @@ class QueueTests(unittest.TestCase):
             def evaluate(self, expression): return 'Policy analyst in government'
 
         class Anchors:
-            checks = 0
+            def __init__(self): self.checks = 0
             def count(self):
                 self.checks += 1
-                return 1 if self.checks == 1 else 2
-            def nth(self, index): return Anchor(('first-person', 'second-person')[index])
+                if self.checks > 1:
+                    raise AssertionError("Second search-page scan")
+                return 1
+            def nth(self, index): return Anchor('first-person')
 
         class Page:
             url = 'https://www.linkedin.com/search/results/people/'
-            def __init__(self): self.anchors = Anchors()
-            def goto(self, *args, **kwargs): return None
+            def __init__(self): self.anchors = Anchors(); self.visits = 0
+            def goto(self, *args, **kwargs): self.visits += 1
             def locator(self, selector):
                 if selector == 'main a[href*="/in/"]':
                     return self.anchors
                 return empty_locator()
 
         page = Page()
-        messages = []
-        first = collect_results(page, self.store, ['policy'], ['policy'],
-                                threading.Event(), messages.append, 200,
+        found = collect_results(page, self.store, ['policy'], ['policy'],
+                                threading.Event(), lambda _: None, 200,
                                 {'min_score':25})
-        self.assertEqual(first, 1)
-        self.assertEqual(self.store.setting('page:policy', '1'), '1')
-        self.assertIn('changed during inspection', ' '.join(messages))
-        second = collect_results(page, self.store, ['policy'], ['policy'],
-                                 threading.Event(), messages.append, 200,
-                                 {'min_score':25})
-        self.assertEqual(second, 1)
+        self.assertEqual(found, 1)
+        self.assertEqual(page.visits, 1)
+        self.assertEqual(page.anchors.checks, 1)
         self.assertEqual(self.store.setting('page:policy'), '2')
-        self.assertEqual(self.store.queued_count(), 2)
 
     def test_warning_appearing_during_discovery_stops_before_next_search(self):
         # A restriction warning may appear after the initial protection checks
@@ -287,7 +336,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.store.setting('page:policy', '1'), '1')
         self.assertIn('navigated away during inspection', ' '.join(messages))
 
-    def test_repeated_search_phrase_still_advances_cursor_each_time(self):
+    def test_repeated_search_phrases_are_loaded_once(self):
         class Anchor:
             def is_visible(self, **kwargs): return True
             def get_attribute(self, key): return '/in/same-person/'
@@ -314,12 +363,12 @@ class QueueTests(unittest.TestCase):
                                 threading.Event(), lambda _: None, 200,
                                 {'min_score':25})
         self.assertEqual(added, 1)
-        self.assertEqual(self.store.setting('page:policy'), '3')
+        self.assertEqual(self.store.setting('page:policy'), '2')
         self.assertIn('page=1', page.visited[0])
-        self.assertIn('page=2', page.visited[1])
+        self.assertEqual(len(page.visited), 1)
 
-    def test_generic_action_links_do_not_discard_unread_people(self):
-        """Valid profile URLs without names must not be treated as inspected leads."""
+    def test_generic_action_links_do_not_trigger_repeated_page_scans(self):
+        """Unidentified action links are never queued or revisited automatically."""
         class ActionLink:
             def is_visible(self, **kwargs): return True
             def get_attribute(self, _): return '/in/real-user-123/'
@@ -350,8 +399,8 @@ class QueueTests(unittest.TestCase):
         added = collect_results(Page(), self.store, ['government'], ['policy'],
                                 threading.Event(), messages.append, 20, {'min_score':25})
         self.assertEqual(added, 0)
-        self.assertEqual(self.store.setting('page:government', '1'), '1')
-        self.assertIn('lack identifiable names', ' '.join(messages))
+        self.assertEqual(self.store.setting('page:government'), '2')
+        self.assertIn('without verified names', ' '.join(messages))
 
 
 

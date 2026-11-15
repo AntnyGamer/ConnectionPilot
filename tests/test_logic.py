@@ -59,6 +59,44 @@ class LogicTests(unittest.TestCase):
                 self.assertIsNone(search_result_name(generic))
                 self.assertIsNone(search_result_name("View profile", generic))
 
+    def test_named_profile_action_labels_are_not_member_names(self):
+        from logic import is_profile_action_label
+        for action in ('Connect with Jane Example', 'Follow Jane Example',
+                       'Message Jane Example', 'Invite Jane Example to connect',
+                       'Send Jane Example a message', 'Pending', 'Remove connection'):
+            with self.subTest(action=action):
+                self.assertTrue(is_profile_action_label(action))
+                self.assertIsNone(search_result_name(action))
+                self.assertIsNone(search_result_name('View profile', action))
+        self.assertFalse(is_profile_action_label('Jane Example'))
+        self.assertEqual(search_result_name('Connect with Jane Example',
+                                            'View Jane Example’s profile'),
+                         'Jane Example')
+
+    def test_matching_settings_reorder_or_capitalization_are_not_changes(self):
+        from logic import matching_signature
+        before_filters = {
+            'locations': 'New Jersey, Philadelphia',
+            'exclude': 'Crypto, Spam',
+            'degree': '2nd only',
+            'min_score': 25,
+        }
+        after_filters = {
+            'locations': ' PHILADELPHIA, new jersey',
+            'exclude': 'spam, CRYPTO',
+            'degree': '2nd only',
+            'min_score': '25',
+        }
+        original = matching_signature(before_filters, ['Government', 'public policy', 'Rowan'])
+        equivalent = matching_signature(after_filters, ['rowan', ' PUBLIC POLICY ', 'government'])
+        self.assertEqual(original, equivalent)
+        self.assertNotEqual(original, matching_signature(
+            after_filters, ['rowan', 'government']))
+        self.assertNotEqual(original, matching_signature(
+            {**after_filters, 'min_score': 50}, ['Government', 'public policy', 'Rowan']))
+        self.assertNotEqual(original, matching_signature(
+            {**after_filters, 'locations': 'Camden'}, ['Government', 'public policy', 'Rowan']))
+
     def test_name_decorations_do_not_change_identity(self):
         self.assertTrue(names_match("Senator José de la Cruz (He/Him)", "Jose de la Cruz"))
         self.assertTrue(names_match("Jane Example", "Dr. Jane Example (She/Her)"))
@@ -241,6 +279,65 @@ class StorageTests(unittest.TestCase):
         self.db = Store(Path(self.tmp.name) / 'test.sqlite3')
     def tearDown(self):
         self.tmp.cleanup()
+    def test_start_preserves_cursor_for_equivalent_matching_edits(self):
+        import json
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+        import main
+
+        from logic import FILTER_FIELDS
+        filters = {field: '' for field in (*FILTER_FIELDS, 'exclude')}
+        filters.update({'degree': 'Any', 'min_score': 25})
+        saved = json.dumps({
+            'filters': filters,
+            'terms': ['Government', 'Public Policy'],
+        }, sort_keys=True)
+        self.db.set_settings({
+            'ui:searches': 'Political Science',
+            'run:matching': saved,
+            'page:Political Science': 7,
+        })
+
+        app = main.App.__new__(main.App)
+        app.running = False
+        app.target = SimpleNamespace(get=lambda: 10)
+        app.daily = SimpleNamespace(get=lambda: 100)
+        app.cooldown = SimpleNamespace(get=lambda: 90.0)
+        app.search_box = SimpleNamespace(get=lambda *_: 'political science\n')
+        app.match_box = SimpleNamespace(get=lambda *_: 'PUBLIC POLICY, government\n')
+        app.filters = dict(filters)
+        app.stop_event = threading.Event()
+        app.pause_event = threading.Event()
+        app.start_btn = MagicMock()
+        app.signin_btn = MagicMock()
+        app.retry_btn = MagicMock()
+        app.reset_btn = MagicMock()
+        app.pause_btn = MagicMock()
+        app.stop_btn = MagicMock()
+        app.emit = MagicMock()
+        with (patch.object(main, 'STORE', self.db),
+              patch.object(main.threading, 'Thread') as thread,
+              patch.object(main.messagebox, 'showerror') as error):
+            app.start()
+        error.assert_not_called()
+        thread.assert_called_once()
+        self.assertEqual(self.db.setting('page:political science'), '7')
+        self.assertIsNone(self.db.setting('page:Political Science'))
+
+    def test_case_only_phrase_edit_preserves_page_cursor_without_refetch(self):
+        self.db.set_setting('page:Government Affairs', 9)
+        self.db.rename_search_pages([('Government Affairs', 'government affairs')])
+        self.assertEqual(self.db.setting('page:government affairs'), '9')
+        self.assertIsNone(self.db.setting('page:Government Affairs'))
+        # Existing new-spelling values cannot override saved phrase progress.
+        self.db.set_setting('page:Government Affairs', 4)
+        self.db.rename_search_pages([('Government Affairs', 'government affairs')])
+        self.assertEqual(self.db.setting('page:government affairs'), '4')
+        self.assertIsNone(self.db.setting('page:Government Affairs'))
+        self.db.rename_search_pages([('Unseen Phrase', 'unseen phrase')])
+        self.assertIsNone(self.db.setting('page:unseen phrase'))
+
     def test_foreign_key_constraint_is_enforced_on_every_connection(self):
         import sqlite3
         with self.db._conn() as db:

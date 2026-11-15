@@ -48,7 +48,7 @@ class WorkerRecoveryTests(unittest.TestCase):
 
     def test_http_access_denied_stops_search_and_profile_immediately(self):
         from types import SimpleNamespace
-        for code in (403, 429, 999):
+        for code in (401, 403, 429, 999):
             with self.subTest(code=code):
                 self.page.goto.reset_mock()
                 self.page.goto.return_value = SimpleNamespace(status=code)
@@ -69,7 +69,7 @@ class WorkerRecoveryTests(unittest.TestCase):
     def test_initial_feed_access_denial_stops_before_discovery(self):
         # Initial authentication/feed navigation needs the same fail-closed
         # HTTP restrictions as search and member-profile navigation.
-        for code in (403, 429, 999):
+        for code in (401, 403, 429, 999):
             with self.subTest(http_status=code):
                 self.page.goto.reset_mock(return_value=True)
                 self.page.goto.return_value = SimpleNamespace(status=code)
@@ -120,6 +120,69 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.assertEqual(added, 1)
         queued.assert_called_once()
         self.assertEqual(self.store.counts().get("queued"), 1)
+
+    def test_discovery_stops_loading_searches_once_remaining_goal_is_queued(self):
+        # With nine attempted invitations out of a goal of ten, the next
+        # matching candidate is enough. Don't load other search phrases just
+        # to fill the old fixed batch of thirty.
+        for i in range(9):
+            url = f'https://www.linkedin.com/in/attempted-{i}/'
+            self.store.add(url, f'Attempted {i}', 'policy', 25)
+            self.store.mark(url, 'uncertain', 'Recorded prior invitation action')
+
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/one-new-person/'
+            def inner_text(self, **kwargs): return 'One New Person'
+            def evaluate(self, script): return 'Government public policy analyst'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, index): return Anchor()
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.visited = []
+            def goto(self, url, **kwargs):
+                self.visited.append(url)
+                return SimpleNamespace(status=200)
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return SimpleNamespace(all=lambda: [], count=lambda: 0)
+
+        page = Page()
+        with patch('automation.check_protection'):
+            added = collect_results(
+                page, self.store, ['government', 'public policy'], ['policy'],
+                self.stop, self.status.append, 10)
+        self.assertEqual(added, 1)
+        self.assertEqual(len(page.visited), 1)
+        self.assertIn('keywords=government', page.visited[0])
+        self.assertIsNone(self.store.setting('page:public policy'))
+        self.assertEqual(self.store.queued_count(), 1)
+
+    def test_invalid_match_score_stops_without_visiting_linkedin(self):
+        for invalid in ("not a number", -1, 101, None):
+            with self.subTest(invalid=invalid):
+                self.page.goto.reset_mock()
+                with self.assertRaises(ValueError):
+                    collect_results(
+                        self.page, self.store, ['political science'], ['policy'],
+                        self.stop, self.status.append, 10,
+                        {'min_score': invalid})
+                self.page.goto.assert_not_called()
+                self.assertIsNone(self.store.setting('page:political science'))
+
+    def test_discovery_at_target_does_not_open_any_search_page(self):
+        url = 'https://www.linkedin.com/in/already-at-goal/'
+        self.store.add(url, 'Already At Goal', 'government policy', 25)
+        self.store.mark(url, 'uncertain', 'Potential invitation')
+        with patch('automation.check_protection'):
+            self.assertEqual(collect_results(
+                self.page, self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 1), 0)
+        self.page.goto.assert_not_called()
 
     def test_worker_reads_all_search_cursors_in_one_batch(self):
         self.config['searches'] = ['political science', 'government', 'public policy']
@@ -179,11 +242,49 @@ class WorkerRecoveryTests(unittest.TestCase):
                         self.stop, self.status.append, 10), 0)
                 self.assertIn("page=1", self.page.goto.call_args.args[0])
 
-    def test_empty_search_retried_twice_before_halt(self):
+    def test_failed_search_phrase_is_not_retried_when_another_cursor_advances(self):
+        # A failed search can otherwise be reloaded on every discovery pass
+        # while another phrase keeps progressing through fresh result pages.
+        self.config['searches'] = ['political science', 'government']
+        visited = []
+
+        def discover(page, store, searches, match_terms, stop_event, notify,
+                     target, filters, pause_event, deferred_searches):
+            visited.append(tuple(searches))
+            if len(visited) == 1:
+                deferred_searches.add('political science')
+                store.set_setting('page:government', 2)
+                return 0
+            raise StopRun('done')
+
+        with patch('automation.collect_results', side_effect=discover) as collect:
+            self.run_fake()
+        self.assertEqual(collect.call_count, 2)
+        self.assertEqual(visited, [
+            ('political science', 'government'), ('government',)])
+        # A manual restart still has the original saved page available.
+        self.assertIsNone(self.store.setting('page:political science'))
+        self.assertEqual(self.store.setting('page:government'), '2')
+
+    def test_all_deferred_searches_stop_without_a_second_discovery(self):
+        self.config['searches'] = ['political science', 'government']
+
+        def discover(page, store, searches, match_terms, stop_event, notify,
+                     target, filters, pause_event, deferred_searches):
+            deferred_searches.update(searches)
+            return 0
+
+        with patch('automation.collect_results', side_effect=discover) as collect:
+            self.run_fake()
+        collect.assert_called_once()
+
+    def test_empty_search_stops_after_first_attempt_without_reloading_page(self):
         with patch('automation.collect_results', return_value=0) as collect:
-            self.assertEqual(self.run_fake(), 2)
-            self.assertEqual(collect.call_count, 3)
-            self.assertTrue(any('retry' in s.lower() for s in self.status))
+            self.assertEqual(self.run_fake(), 0)
+            self.assertEqual(collect.call_count, 1)
+            # StopRun reaches the UI worker, which supplies the final status;
+            # this low-level fake intentionally observes only the worker call.
+            self.assertFalse(any('retry' in msg.lower() for msg in self.status))
 
     def test_exhausted_discovery_pages_stop_without_empty_retries(self):
         self.store.set_setting('page:political science', '16')
@@ -192,6 +293,58 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.assertEqual(self.run_fake(), 0)
             collect.assert_not_called()
         self.assertEqual(self.store.total_attempts(), 0)
+
+    def test_invalid_score_stops_before_feed_or_queued_profile_visit(self):
+        # A corrupt saved setting must not load LinkedIn even when the local
+        # queue already contains a candidate (bypassing search discovery).
+        queued_url = 'https://www.linkedin.com/in/queued-invalid-score/'
+        self.store.add(queued_url, 'Queued Invalid Score', 'government', 25)
+        for invalid in ('invalid', -1, 101, None):
+            with self.subTest(score=invalid):
+                self.config['filters'] = {'min_score': invalid}
+                self.page.goto.reset_mock()
+                self.context.chromium.launch_persistent_context.reset_mock()
+                with patch('automation.send_one') as send, \
+                     patch('automation.collect_results') as discover:
+                    self.assertEqual(self.run_fake(), 0)
+                self.page.goto.assert_not_called()
+                self.context.chromium.launch_persistent_context.assert_not_called()
+                send.assert_not_called()
+                discover.assert_not_called()
+                self.assertFalse(self.store.has_attempt(queued_url))
+
+    def test_missing_campaign_phrases_stop_before_browser_startup(self):
+        for field in ('searches', 'match_terms'):
+            with self.subTest(field=field):
+                self.page.goto.reset_mock()
+                self.context.chromium.launch_persistent_context.reset_mock()
+                original = self.config[field]
+                self.config[field] = []
+                try:
+                    self.assertEqual(self.run_fake(), 0)
+                finally:
+                    self.config[field] = original
+                self.page.goto.assert_not_called()
+                self.context.chromium.launch_persistent_context.assert_not_called()
+
+    def test_exhausted_discovery_skips_feed_and_browser_entirely(self):
+        self.store.set_setting('page:political science', '16')
+        with patch('automation.collect_results') as collect:
+            self.assertEqual(self.run_fake(), 0)
+        collect.assert_not_called()
+        self.page.goto.assert_not_called()
+        self.context.chromium.launch_persistent_context.assert_not_called()
+
+    def test_exhausted_search_still_processes_existing_queue(self):
+        self.store.set_setting('page:political science', '16')
+        url = 'https://www.linkedin.com/in/queued-when-exhausted/'
+        self.store.add(url, 'Queued When Exhausted', 'public policy', 25)
+        with patch('automation.send_one', side_effect=StopRun('checked')) as send:
+            self.run_fake()
+        send.assert_called_once()
+        # The queued profile is a legitimate reason to launch the browser.
+        self.page.goto.assert_called_once()
+        self.context.chromium.launch_persistent_context.assert_called_once()
 
     def test_one_remaining_discovery_page_still_runs(self):
         self.config['searches'].append('government')

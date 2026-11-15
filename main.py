@@ -33,12 +33,13 @@ from google_login import close_google_signin, open_google_signin
 from process_env import prepare_external_processes
 from logic import (FILTER_FIELDS, SEND_START_HOUR, SEND_END_HOUR,
                    MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS, theoretical_daily_capacity,
-                   valid_cooldown_seconds, safe_saved_int, unique_phrases)
+                   valid_cooldown_seconds, safe_saved_int, unique_phrases,
+                   matching_signature)
 from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
 APP_DIR = Path.home() / "ConnectionPilot"
-APP_VERSION = "v1.1.1"
+APP_VERSION = "v1.1.2"
 
 
 def _startup_storage_error(message):
@@ -369,10 +370,14 @@ class App:
         ttk.Button(container, text="Save filters", command=save, style="Primary.TButton").pack(anchor="e")
         dlg.bind("<Escape>", lambda _: dlg.destroy())
 
-    def put_log(self, msg):
+    def put_logs(self, messages):
+        """Append a UI event batch with a single widget update and trim."""
+        if not messages:
+            return
         widget = self.log_widget
+        entries = "".join(f"[{datetime.now():%H:%M:%S}] {msg}\n" for msg in messages)
         widget.configure(state="normal")
-        widget.insert("end", f"[{datetime.now():%H:%M:%S}] {msg}\n")
+        widget.insert("end", entries)
         # Keep only the recent activity in Tk's text widget. The permanent
         # campaign history is stored separately in SQLite.
         last_line = int(widget.index("end-1c").split(".", 1)[0])
@@ -381,6 +386,9 @@ class App:
             widget.delete("1.0", f"{excess + 1}.0")
         widget.see("end")
         widget.configure(state="disabled")
+
+    def put_log(self, msg):
+        self.put_logs((msg,))
 
     def refresh(self):
         counts, total, confirmed, possible = STORE.dashboard_stats()
@@ -427,16 +435,20 @@ class App:
         # Never monopolize Tk's main thread when the worker has emitted a
         # large burst of messages; quickly schedule the remaining batch.
         needs_refresh = False
+        last_status = None
+        activity_lines = []
         for _ in range(MAX_UI_EVENTS_PER_TICK):
             try:
                 kind, data = self.events.get_nowait()
             except queue.Empty:
                 break
             if kind == "status":
-                self.status.set(data)
+                # Tk only repaints after this callback; intermediate status
+                # assignments are redundant. Preserve every activity entry.
+                last_status = data
                 # Don't turn every minute of waiting into an enormous log.
                 if "Next action in" not in data:
-                    self.put_log(data)
+                    activity_lines.append(data)
             elif kind == "refresh":
                 needs_refresh = True
             elif kind == "done":
@@ -449,6 +461,9 @@ class App:
                 self.stop_btn.configure(state="disabled")
                 self.pause_event.clear()
                 needs_refresh = True
+        if last_status is not None:
+            self.status.set(last_status)
+        self.put_logs(activity_lines)
         # Many worker messages can request the same counter redraw. Preserve
         # the final current state, but read SQLite and update Tk just once.
         if needs_refresh:
@@ -514,9 +529,32 @@ class App:
             STORE.reset_search_pages([*prior_searches, *searches])
             searches_reset = True
             self.emit("status", f"Searches changed: removed {removed} older unsent lead(s); restarting discovery.")
+        if previous_searches is not None and not searches_reset:
+            # The cursor key uses the displayed phrase. Changing only case
+            # must move its progress rather than silently reread page one.
+            old_spellings = {
+                term.casefold(): term
+                for term in unique_phrases(previous_searches.splitlines())
+            }
+            case_changes = [
+                (old_spellings[term.casefold()], term)
+                for term in searches
+                if term.casefold() in old_spellings
+                and old_spellings[term.casefold()] != term
+            ]
+            if case_changes:
+                STORE.rename_search_pages(case_changes)
         current_filters_json = json.dumps(self.filters, sort_keys=True)
         matching_config = json.dumps({"filters": self.filters, "terms": matches}, sort_keys=True)
-        matching_changed = saved_settings.get("run:matching") != matching_config
+        # Reordering/capitalizing equivalent terms cannot change matching:
+        # resetting cursors for such formatting edits causes unnecessary
+        # LinkedIn page reloads. Compare behavior, not serialized text.
+        try:
+            old_config = json.loads(saved_settings.get("run:matching", "null"))
+            old_signature = matching_signature(old_config["filters"], old_config["terms"])
+        except (TypeError, ValueError, KeyError, OverflowError):
+            old_signature = None
+        matching_changed = old_signature != matching_signature(self.filters, matches)
         if matching_changed:
             STORE.requeue_filtered()
             if not searches_reset:

@@ -48,6 +48,18 @@ def normalize_profile(url: str) -> str | None:
         return None
 
 
+def is_profile_action_label(value: str) -> bool:
+    """Reject explicit action captions that are not member names.
+
+    Named buttons such as "Connect with Jane Example" previously looked like
+    valid search-result names and led to unnecessary profile visits.
+    """
+    return bool(re.fullmatch(
+        r"(?:connect(?: with .+)?|follow(?: .+)?|message(?: .+)?|"
+        r"invite .+ to connect|pending|remove connection|send .+ a message)",
+        " ".join((value or "").split()), flags=re.I))
+
+
 def search_result_name(text: str, label: str = "") -> str | None:
     """Read a visible member name or an explicit accessible profile-link label."""
     generic = {"connect", "follow", "message"}
@@ -55,13 +67,16 @@ def search_result_name(text: str, label: str = "") -> str | None:
     lines = (text or "").splitlines()
     visible = " ".join(lines[0].split()) if lines else ""
     pattern = r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile"
-    if visible.casefold() not in generic and not re.fullmatch(generic_profile, visible, flags=re.I):
+    if (visible.casefold() not in generic and not is_profile_action_label(visible)
+            and not re.fullmatch(generic_profile, visible, flags=re.I)):
         match = re.fullmatch(pattern, visible, flags=re.I)
         name = match.group(1).strip() if match else visible
         if name and len(name) <= 90 and name.casefold() not in generic:
             return name
     accessible_text = " ".join((label or "").split())
-    if accessible_text.casefold() not in generic and not re.fullmatch(generic_profile, accessible_text, flags=re.I):
+    if (accessible_text.casefold() not in generic
+            and not is_profile_action_label(accessible_text)
+            and not re.fullmatch(generic_profile, accessible_text, flags=re.I)):
         accessible = re.fullmatch(pattern, accessible_text, flags=re.I)
         if accessible:
             name = accessible.group(1).strip()
@@ -213,6 +228,24 @@ def clean_terms(value) -> list[str]:
                 seen.add(term)
                 result.append(term)
     return result
+
+
+def matching_signature(filters: dict, terms: list[str]) -> tuple:
+    """Canonicalize only settings with order- and case-insensitive semantics.
+
+    This is for deciding whether old search cursors need resetting. It does
+    not change the user's displayed filters or the actual matching rules.
+    """
+    if not isinstance(filters, dict) or not isinstance(terms, list):
+        raise ValueError("Invalid matching configuration")
+    threshold = int(filters.get("min_score", 0))
+    return (
+        tuple(sorted(_normalized_score_terms(terms))),
+        tuple((field, tuple(sorted(clean_terms(filters.get(field)))))
+              for field in (*FILTER_FIELDS, "exclude")),
+        str(filters.get("degree", "Any")),
+        threshold,
+    )
 
 
 def passes_profile_filters(profile_text: str, header_text: str, filters: dict | None,

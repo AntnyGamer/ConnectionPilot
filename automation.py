@@ -199,23 +199,47 @@ def wait_or_stop(seconds, stop_event, pause_event, status, reason="", preserve_p
 def reject_denied_page(response):
     """A denied/rate-limited navigation is not a retryable search result."""
     code = getattr(response, "status", None)
-    if code in (403, 429, 999):
+    if code in (401, 403, 429, 999):
         raise ProtectionScreen(
             f"LinkedIn denied or limited page access (HTTP {code}); stop automated access")
 
 
-def collect_results(page, store, searches, match_terms, stop_event, notify, target, filters=None, pause_event=None):
+def _validated_minimum_score(filters):
+    """Validate matching before opening any LinkedIn page."""
+    raw = (filters or {}).get("min_score", 1)
+    try:
+        score = int(raw)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("Invalid profile minimum score") from exc
+    if not 0 <= score <= 100:
+        raise ValueError("Invalid profile minimum score")
+    return score
+
+
+def collect_results(page, store, searches, match_terms, stop_event, notify, target,
+                    filters=None, pause_event=None, deferred_searches=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
-    added = 0
+    # A campaign close to its goal needs fewer leads than a new campaign.
+    # Stop discovery once enough candidates exist to satisfy the remaining
+    # goal instead of visiting more search pages to fill a fixed batch of 30.
+    remaining_goal = max(0, target - store.total_attempts())
+    if remaining_goal == 0:
+        return 0
     settings = filters or {}
+    # Fail before the first search request. The campaign worker also checks
+    # this setting before opening the initial LinkedIn feed/profile page.
+    minimum_score = _validated_minimum_score(settings)
+    queue_threshold = min(30, remaining_goal)
+    # The same worker owns discovery for this run. Queue inserts are batched
+    # below, so we can maintain the exact count locally instead of executing
+    # another count query after every search page.
+    queued_total = store.queued_count()
+    if queued_total >= queue_threshold:
+        return 0
+    added = 0
     # Matching terms and settings do not change during this discovery pass.
     score_terms = _normalized_score_terms(match_terms)
-    raw_score = settings.get("min_score", 1)
-    try:
-        minimum_score = max(0, int(raw_score))
-    except (ValueError, TypeError, OverflowError):
-        minimum_score = None
     second_only = str(settings.get("degree", "Any")) == "2nd only"
     exclusions = None
     # Only navigation timeouts are recoverable here; unexpected browser
@@ -224,6 +248,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Terminal candidates cannot change during discovery. Load them once
     # rather than querying all completed profiles per search phrase.
     processed = store.processed_urls()
+    # Repeated or case-varied phrases should never cause duplicate page
+    # navigations, even when a non-UI caller passes such a list.
+    searches = unique_phrases(searches)
     saved_pages = store.settings_for(["page:" + search for search in searches])
     for search in searches:
         if stop_event.is_set():
@@ -249,7 +276,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             # Never retry a timeout until protection is checked first.
             check_protection(page)
             notify(f"Search page {page_no} for '{search}' timed out; "
-                   "keeping its cursor and trying other searches.")
+                   "skipping it for the rest of this run; no automatic retry.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         reject_denied_page(response)
         # An ordinary redirect or temporary server error is not evidence of
@@ -258,12 +287,16 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         check_protection(page)
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
             notify(f"LinkedIn redirected the search for '{search}'; leaving page {page_no} "
-                   "pending and trying other search phrases.")
+                   "pending until the next manually started run.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         code = getattr(response, "status", None)
         if isinstance(code, int) and 500 <= code <= 599:
             notify(f"LinkedIn returned a temporary server error (HTTP {code}) for "
-                   f"'{search}'; keeping page {page_no} pending.")
+                   f"'{search}'; deferring it until another manually started run.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         # Profile links inside visible main-content search results.
         anchors = page.locator('main a[href*="/in/"]')
@@ -277,23 +310,32 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # A late restriction notice may replace the search results.
                 # Never refresh another LinkedIn page before checking again.
                 check_protection(page)
-                notify(f"No profile links appeared for '{search}'; retaining page {page_no} for a future retry.")
+                notify(f"No profile links appeared for '{search}'; deferring page {page_no} "
+                       "until a manually started run.")
+                if deferred_searches is not None:
+                    deferred_searches.add(search)
                 continue
         # Result hydration may have changed the page or redirected elsewhere.
         # Check again before treating any links as search candidates.
         check_protection(page)
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
             notify(f"LinkedIn redirected the results for '{search}' during loading; "
-                   f"retaining page {page_no} and trying other search phrases.")
+                   f"deferring page {page_no} until another manually started run.")
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
         seen_this_page = set()
         # Skip already processed people without extracting their card content.
         valid_profile_links = set()
         named_profile_links = set()
         extraction_errors = 0
-        # Scan the *entire* displayed results page rather than silently
-        # discarding links past an arbitrary first-80 cutoff.
-        paused_during_page = False
+        first_degree_links = set()
+        degree_filtered_links = set()
+        score_filtered_links = set()
+        excluded_links = set()
+        # Finish inspecting the already-loaded page before honoring Pause.
+        # Abandoning it mid-scan would force a duplicate page navigation on
+        # Resume; no invitations occur during discovery.
         candidates = []
         for i in range(anchor_count):
             if stop_event.is_set():
@@ -303,9 +345,6 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                         urlsplit(page.url).path.rstrip("/").casefold() == "/search/results/people"):
                     added += store.add_many(candidates)
                 raise StopRun()
-            if pause_event is not None and pause_event.is_set():
-                paused_during_page = True
-                break
             anchor = anchors.nth(i)
             try:
                 if not anchor.is_visible(timeout=1000):
@@ -322,11 +361,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     # on this page has a readable member name.
                     seen_this_page.add(url)
                     continue
+                # Only the person's actual visible name or an explicit
+                # accessible profile label is enough to queue a candidate.
+                # Do not open extra profiles to resolve generic card links.
                 name = search_result_name(anchor.inner_text(timeout=1200) or "")
                 if not name:
                     name = search_result_name("", anchor.get_attribute("aria-label") or "")
-                # Ignore generic profile actions before reading surrounding
-                # card text. They are not identified people.
                 if not name:
                     continue
                 named_profile_links.add(url)
@@ -349,6 +389,9 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   let best = (el.innerText || '').trim();
                   for (let n = el.parentElement, j = 0; n && j < 6;
                        n = n.parentElement, j++) {
+                    // Search-page headings and filters aren't evidence about
+                    // this person, even on a one-result search page.
+                    if (n.matches('main, [role="main"]')) break;
                     const people = n.querySelectorAll('a[href*="/in/"]');
                     if (Array.from(people).some(a => key(a) !== own)) break;
                     const t = (n.innerText || '').trim();
@@ -357,6 +400,10 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   return best;
                 }""") or ""
                 if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
+                    first_degree_links.add(url)
+                    # Relationship is definitive for this profile URL.
+                    # Other anchors for the same URL need no DOM inspection.
+                    seen_this_page.add(url)
                     continue
                 # Search cards that explicitly say 3rd degree can be
                 # excluded when a 2nd-only filter is enabled. Unspecified
@@ -364,17 +411,24 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 if (second_only
                         and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
                                       snippet, re.I)):
+                    degree_filtered_links.add(url)
+                    # An explicitly disallowed connection degree is likewise
+                    # definitive; ignore duplicate anchors for this profile.
+                    seen_this_page.add(url)
                     continue
                 score = _match_score_prepared(snippet, score_terms)
-                if minimum_score is None:
-                    raise ValueError("Invalid profile minimum score")
                 if score < minimum_score:
+                    # Never override the user's minimum relevance threshold
+                    # based solely on a sparse search card. Users who choose
+                    # score 0 explicitly can opt in to more profile inspections.
+                    score_filtered_links.add(url)
                     continue
                 if exclusions is None:
                     exclusions = clean_terms(settings.get("exclude"))
                 if exclusions:
                     folded_snippet = snippet.casefold()
                     if any(term in folded_snippet for term in exclusions):
+                        excluded_links.add(url)
                         continue
                 seen_this_page.add(url)
                 # Avoid opening a new SQLite connection for every profile
@@ -391,46 +445,62 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
         check_protection(page)
         if urlsplit(page.url).path.rstrip("/").casefold() != "/search/results/people":
             notify(f"Results for '{search}' navigated away during inspection; "
-                   f"retaining page {page_no} without saving unrelated profiles.")
-            if paused_during_page:
+                   f"deferring page {page_no} without saving unrelated profiles.")
+            if pause_event is not None and pause_event.is_set():
                 return added
+            if deferred_searches is not None:
+                deferred_searches.add(search)
             continue
+        added_this_search = 0
         if candidates:
             # Commit even on a partially scanned page so Pause and Stop
             # preserve candidates already inspected on the search page.
-            added += store.add_many(candidates)
-        if paused_during_page:
-            # Keep this page pending: already collected leads are deduplicated
-            # and the rest can be inspected safely after Resume.
-            return added
-        # A readable new member on a mixed results page must not obscure a
-        # different, unnamed new member. Multiple links to a single person
-        # are fine once any one link supplies that person's actual name.
+            added_this_search = store.add_many(candidates)
+            added += added_this_search
+            queued_total += added_this_search
+        # Search results can mutate after the initial snapshot. Reopening
+        # this page to chase later cards caused repeated navigations and
+        # unnecessary account activity. Complete at most one navigation for
+        # each successfully opened search page; collect only identifiable,
+        # relevant people present in the initial scan.
         unnamed_new_links = valid_profile_links - processed - named_profile_links
-        # LinkedIn may append or replace cards after the first result appears.
-        # Never mark a page as fully inspected if its link list changed
-        # while we were reading the initial snapshot.
-        result_list_changed = anchors.count() != anchor_count
-        if result_list_changed:
-            notify(f"Results for '{search}' changed during inspection; "
-                   f"retaining page {page_no} to inspect newly loaded profiles.")
-        elif extraction_errors:
-            notify(f"Could not read {extraction_errors} search result(s) on page {page_no}; "
-                   "keeping this page for another attempt.")
-        elif unnamed_new_links:
-            notify(f"{len(unnamed_new_links)} new profile link(s) on page {page_no} "
-                   "lack identifiable names; retaining the page rather than dropping them.")
-        elif valid_profile_links:
-            # Every nonprocessed link is named, or all links were processed.
+        if extraction_errors or unnamed_new_links:
+            notify(
+                f"Page {page_no} for '{search}' had {extraction_errors} unreadable card(s) "
+                f"and {len(unnamed_new_links)} link(s) without verified names. "
+                "Not revisiting this search page automatically."
+            )
+        if valid_profile_links:
             store.set_setting(key, page_no + 1)
-            # Keep the prefetched snapshot in sync if a caller repeats a
-            # search phrase in one discovery pass.
             saved_pages[key] = str(page_no + 1)
         else:
-            notify(f"No usable profile links found for '{search}'. Search layout may have changed.")
-        notify(f"Queued {added} new matches this pass.")
+            # An unexpected page layout with zero usable member links must
+            # not trigger endless rediscovery of the same page.
+            # Avoid guessing that unrelated profile anchors are people.
+            store.set_setting(key, 16)
+            saved_pages[key] = "16"
+            notify(f"No usable profile links found for '{search}' on page {page_no}; "
+                   "stopping discovery for this phrase instead of rescanning.")
+        # Report only information gathered during the single scan, without
+        # performing another DOM-wide snapshot.
+        accepted_urls = {candidate[0] for candidate in candidates}
+        diagnostics = (
+            f"{len(valid_profile_links)} distinct visible profile links; "
+            f"{len(valid_profile_links & processed)} previously processed; "
+            f"{len(unnamed_new_links)} without readable names; "
+            f"{len(first_degree_links - accepted_urls)} already connected; "
+            f"{len(degree_filtered_links - accepted_urls)} filtered by degree; "
+            f"{len(score_filtered_links - accepted_urls)} below match score; "
+            f"{len(excluded_links - accepted_urls)} excluded by keyword"
+        )
+        notify(f"Queued {added_this_search} new matches for '{search}' on page {page_no} "
+               f"({added} total this pass; {diagnostics}).")
+        # Pause after this loaded page, without opening the next search
+        # page or requiring a repeat visit on Resume.
+        if pause_event is not None and pause_event.is_set():
+            return added
         # Stop once we have enough to process for the current day; later passes discover more.
-        if store.queued_count() >= min(30, target):
+        if queued_total >= queue_threshold:
             break
     return added
 
@@ -814,6 +884,25 @@ def _goal_progress_message(store):
             "Some clicks may have been rejected by LinkedIn.")
 
 
+def _read_initial_search_cursors(store, searches):
+    """Preload cursors for a queue-empty campaign with one local DB read.
+
+    Reuse this snapshot on the first discovery pass; the saved search state
+    does not change while the worker is paused or waiting for sending hours.
+    """
+    if not searches or store.next_profile() is not None:
+        return None
+    return store.settings_for(["page:" + search for search in searches])
+
+
+def _cursor_exhausted(value):
+    """Unreadable cursors are recoverable, not proof of exhausted discovery."""
+    try:
+        return int(value) > 15
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
     """Run in a background thread. One click launches one visible browser session."""
     if stop_event.is_set():
@@ -825,6 +914,20 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
         notify(_goal_progress_message(store))
         on_update()
         return
+    searches = unique_phrases(config["searches"])
+    match_terms = unique_phrases(config["match_terms"])
+    if not searches or not match_terms:
+        raise StopRun("Search and matching phrases must be set before opening LinkedIn.")
+    try:
+        _validated_minimum_score(config.get("filters"))
+    except ValueError as exc:
+        raise StopRun("Invalid minimum match score; no LinkedIn page was loaded.") from exc
+    initial_cursor_values = _read_initial_search_cursors(store, searches)
+    if (initial_cursor_values is not None and searches and
+            all(_cursor_exhausted(initial_cursor_values.get("page:" + s, "1"))
+                for s in searches)):
+        raise StopRun("No queued profiles and all search pages have already been inspected. "
+                      "Change search phrases to restart discovery; no LinkedIn page was loaded.")
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -884,11 +987,10 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             check_protection(page)
             notify("Signed in. Campaign is running.")
             on_update()
-            searches = unique_phrases(config["searches"])
-            match_terms = unique_phrases(config["match_terms"])
             filters = config.get("filters", {})
-            cursor_keys = ["page:" + term for term in searches]
-            discovery_failures = 0
+            # These are only deferred in memory. A manual restart can retry
+            # them, but one campaign run never reopens failed search pages.
+            deferred_searches = set()
             while not stop_event.is_set():
                 if pause_event.is_set():
                     wait_or_stop(2, stop_event, pause_event, notify)
@@ -919,42 +1021,39 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                 profile = store.next_profile()
                 if not profile:
                     notify("Finding new matching professionals…")
-                    before_values = store.settings_for(cursor_keys)
-                    before_pages = [before_values.get(key, "1") for key in cursor_keys]
-                    # Once all search cursors exceed the built-in 15-page
-                    # ceiling there is no useful retry: discovery would never
-                    # visit another result page until searches are changed.
-                    def exhausted_cursor(value):
-                        try:
-                            return int(value) > 15
-                        except (TypeError, ValueError, OverflowError):
-                            return False
-                    if searches and all(exhausted_cursor(value) for value in before_pages):
-                        raise StopRun("All searches reached the 15-page discovery limit. "
-                                      "Add or change search phrases to restart discovery.")
-                    new_count = collect_results(page, store, searches, match_terms, stop_event, notify,
-                                                config["target"], filters, pause_event)
+                    active_searches = [search for search in searches
+                                       if search not in deferred_searches]
+                    active_cursor_keys = ["page:" + search for search in active_searches]
+                    if initial_cursor_values is not None:
+                        # This is the same local DB snapshot used for the
+                        # startup no-work check; don't query SQLite twice.
+                        before_values = initial_cursor_values
+                        initial_cursor_values = None
+                    else:
+                        before_values = store.settings_for(active_cursor_keys)
+                    before_pages = [before_values.get(key, "1") for key in active_cursor_keys]
+                    if not active_searches or all(_cursor_exhausted(value) for value in before_pages):
+                        raise StopRun("No further search pages remain for this run. "
+                                      "Failed pages were not retried automatically.")
+                    new_count = collect_results(page, store, active_searches, match_terms,
+                                                stop_event, notify, config["target"],
+                                                filters, pause_event, deferred_searches)
                     on_update()
                     if pause_event.is_set():
                         continue
                     if not new_count:
-                        after_values = store.settings_for(cursor_keys)
-                        after_pages = [after_values.get(key, "1") for key in cursor_keys]
+                        after_values = store.settings_for(active_cursor_keys)
+                        after_pages = [after_values.get(key, "1") for key in active_cursor_keys]
                         if after_pages != before_pages:
-                            # Pages with only previously seen or nonmatching profiles
-                            # must not prevent discovery on subsequent result pages.
-                            discovery_failures = 0
+                            # Proceed to new pages, but do not revisit an
+                            # inspected page just because it had no matches.
                             notify("No new matches on this page; checking later search pages.")
                             continue
-                        discovery_failures += 1
-                        if discovery_failures >= 3:
-                            raise StopRun("No matching results after three discovery attempts. "
-                                          "The search layout may have changed or results may be exhausted.")
-                        notify(f"Search temporarily returned no new profiles; retry "
-                               f"{discovery_failures}/2 in 15 seconds.")
-                        wait_or_stop(15, stop_event, pause_event, notify)
-                        continue
-                    discovery_failures = 0
+                        # No search cursor advanced. Retrying this same page
+                        # automatically would increase LinkedIn page views,
+                        # so stop and let the user decide whether to restart.
+                        raise StopRun("Search made no progress. Stopped without automatic "
+                                      "retries to avoid repeated page visits.")
                     profile = store.next_profile()
                 if not profile:
                     raise StopRun("Could not select a queued candidate.")
