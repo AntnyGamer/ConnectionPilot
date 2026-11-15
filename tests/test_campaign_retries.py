@@ -48,7 +48,7 @@ class WorkerRecoveryTests(unittest.TestCase):
 
     def test_http_access_denied_stops_search_and_profile_immediately(self):
         from types import SimpleNamespace
-        for code in (403, 429, 999):
+        for code in (401, 403, 429, 999):
             with self.subTest(code=code):
                 self.page.goto.reset_mock()
                 self.page.goto.return_value = SimpleNamespace(status=code)
@@ -69,7 +69,7 @@ class WorkerRecoveryTests(unittest.TestCase):
     def test_initial_feed_access_denial_stops_before_discovery(self):
         # Initial authentication/feed navigation needs the same fail-closed
         # HTTP restrictions as search and member-profile navigation.
-        for code in (403, 429, 999):
+        for code in (401, 403, 429, 999):
             with self.subTest(http_status=code):
                 self.page.goto.reset_mock(return_value=True)
                 self.page.goto.return_value = SimpleNamespace(status=code)
