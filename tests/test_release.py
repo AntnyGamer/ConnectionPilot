@@ -69,6 +69,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(set(re.findall(r"v\d+\.\d+\.\d+", windows)), {version})
         self.assertEqual(set(re.findall(r"v\d+\.\d+\.\d+", tests)), {version})
 
+    def test_readme_documents_current_no_retry_safety_behavior(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("for the rest of the current run", readme)
+        self.assertIn("HTTP 401, 403, 429 and 999", readme)
+        self.assertIn("before pausing", readme)
+        self.assertNotIn("Empty search pages are retried twice", readme)
+        self.assertNotIn("page is retained for another inspection", readme)
+        self.assertNotIn("that page remains pending", readme)
+
     def test_exe_smoke_validation_blocks_artifact_publication(self):
         workflow = (ROOT / '.github/workflows/windows-build.yml').read_text()
         builder = (ROOT / 'scripts/build_windows.py').read_text()
