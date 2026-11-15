@@ -199,7 +199,7 @@ def wait_or_stop(seconds, stop_event, pause_event, status, reason="", preserve_p
 def reject_denied_page(response):
     """A denied/rate-limited navigation is not a retryable search result."""
     code = getattr(response, "status", None)
-    if code in (403, 429, 999):
+    if code in (401, 403, 429, 999):
         raise ProtectionScreen(
             f"LinkedIn denied or limited page access (HTTP {code}); stop automated access")
 
