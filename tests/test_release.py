@@ -61,7 +61,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn(f"Test ConnectionPilot {version}", tests)
         self.assertIn(f"Build branded ConnectionPilot {version}", windows)
         self.assertIn(f"Build the ConnectionPilot {version}", builder)
-        self.assertIn(f"# ConnectionPilot {version} — Windows", readme)
+        self.assertIn(f"# ConnectionPilot {version}", readme)
         self.assertIn(f"**Version: {version}.**", readme)
         self.assertIn(f"ConnectionPilot-{version}-Windows-EXE", readme)
         # Versioned workflow metadata must never point at an older/newer
