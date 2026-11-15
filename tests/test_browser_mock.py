@@ -972,9 +972,12 @@ class BrowserMockTests(unittest.TestCase):
                 return getattr(self.browser, name)
         page = RedirectedPage(self.page)
         messages = []
+        deferred = set()
         self.assertEqual(collect_results(page, self.db, ['policy', 'government'],
-                         ['policy'], threading.Event(), messages.append, 100), 1)
+                         ['policy'], threading.Event(), messages.append, 100,
+                         deferred_searches=deferred), 1)
         self.assertEqual(len(page.visits), 2)
+        self.assertEqual(deferred, {'policy'})
         self.assertEqual(self.db.setting('page:policy', '1'), '1')
         self.assertEqual(self.db.setting('page:government'), '2')
         self.assertEqual(self.db.next_profile()['url'],
@@ -998,10 +1001,13 @@ class BrowserMockTests(unittest.TestCase):
                 return getattr(self.browser, name)
         page = SearchPage(self.page)
         messages = []
+        deferred = set()
         added = collect_results(page, self.db, ['policy', 'government'], ['policy'],
-                                threading.Event(), messages.append, 100)
+                                threading.Event(), messages.append, 100,
+                                deferred_searches=deferred)
         self.assertEqual(added, 1)
         self.assertEqual(len(page.visits), 2)
+        self.assertEqual(deferred, {'policy'})
         self.assertEqual(self.db.setting("page:policy", "1"), "1")
         self.assertEqual(self.db.setting("page:government"), "2")
         self.assertIn("timed out", " ".join(messages))
@@ -1047,10 +1053,13 @@ class BrowserMockTests(unittest.TestCase):
             def __getattr__(self, name):
                 return getattr(self.browser, name)
         page = ServerErrorPage(self.page)
+        deferred = set()
         count = collect_results(page, self.db, ['policy', 'government'], ['policy'],
-                                threading.Event(), lambda _: None, 100)
+                                threading.Event(), lambda _: None, 100,
+                                deferred_searches=deferred)
         self.assertEqual(count, 1)
         self.assertEqual(page.visits, 2)
+        self.assertEqual(deferred, {'policy'})
         self.assertEqual(self.db.setting('page:policy', '1'), '1')
         self.assertEqual(self.db.setting('page:government'), '2')
 
