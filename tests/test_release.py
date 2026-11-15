@@ -32,6 +32,43 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('Keeping the immutable release unchanged', workflow)
         self.assertIn('exit 0', workflow)
 
+    def test_version_matches_app_exe_metadata_workflows_and_release(self):
+        """A future bump must update every version-bearing release surface."""
+        import re
+        from main import APP_VERSION
+
+        version = APP_VERSION
+        self.assertRegex(version, r"^v[0-9]+\\.[0-9]+\\.[0-9]+$")
+        major, minor, patch = (int(v) for v in version[1:].split("."))
+        windows_version = f"{major}.{minor}.{patch}.0"
+        windows_tuple = f"({major}, {minor}, {patch}, 0)"
+
+        metadata = (ROOT / "assets/connectionpilot_version.txt").read_text()
+        windows = (ROOT / ".github/workflows/windows-build.yml").read_text()
+        tests = (ROOT / ".github/workflows/tests.yml").read_text()
+        readme = (ROOT / "README.md").read_text()
+        builder = (ROOT / "scripts/build_windows.py").read_text()
+
+        self.assertIn(f"filevers={windows_tuple}", metadata)
+        self.assertIn(f"prodvers={windows_tuple}", metadata)
+        self.assertEqual(metadata.count(f"'{windows_version}'"), 2)
+        self.assertIn(f"FileVersion -ne '{windows_version}'", windows)
+        self.assertIn(f"^PASS {version}:", windows)
+        self.assertIn(f"ConnectionPilot-{version}-Windows-EXE", windows)
+        self.assertEqual(windows.count(f'TAG="{version}"'), 2)
+        self.assertIn(f'--title "ConnectionPilot {version}"', windows)
+        self.assertIn(f"ConnectionPilot {version} for Windows", windows)
+        self.assertIn(f"Test ConnectionPilot {version}", tests)
+        self.assertIn(f"Build branded ConnectionPilot {version}", windows)
+        self.assertIn(f"Build the ConnectionPilot {version}", builder)
+        self.assertIn(f"# ConnectionPilot {version} — Windows", readme)
+        self.assertIn(f"**Version: {version}.**", readme)
+        self.assertIn(f"ConnectionPilot-{version}-Windows-EXE", readme)
+        # Versioned workflow metadata must never point at an older/newer
+        # release while producing an EXE bearing a different version.
+        self.assertEqual(set(re.findall(r"v\\d+\\.\\d+\\.\\d+", windows)), {version})
+        self.assertEqual(set(re.findall(r"v\\d+\\.\\d+\\.\\d+", tests)), {version})
+
     def test_exe_smoke_validation_blocks_artifact_publication(self):
         workflow = (ROOT / '.github/workflows/windows-build.yml').read_text()
         builder = (ROOT / 'scripts/build_windows.py').read_text()
