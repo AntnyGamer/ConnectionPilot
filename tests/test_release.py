@@ -38,7 +38,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         from main import APP_VERSION
 
         version = APP_VERSION
-        self.assertRegex(version, r"^v[0-9]+\\.[0-9]+\\.[0-9]+$")
+        self.assertRegex(version, r"^v[0-9]+\.[0-9]+\.[0-9]+$")
         major, minor, patch = (int(v) for v in version[1:].split("."))
         windows_version = f"{major}.{minor}.{patch}.0"
         windows_tuple = f"({major}, {minor}, {patch}, 0)"
@@ -66,8 +66,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn(f"ConnectionPilot-{version}-Windows-EXE", readme)
         # Versioned workflow metadata must never point at an older/newer
         # release while producing an EXE bearing a different version.
-        self.assertEqual(set(re.findall(r"v\\d+\\.\\d+\\.\\d+", windows)), {version})
-        self.assertEqual(set(re.findall(r"v\\d+\\.\\d+\\.\\d+", tests)), {version})
+        self.assertEqual(set(re.findall(r"v\d+\.\d+\.\d+", windows)), {version})
+        self.assertEqual(set(re.findall(r"v\d+\.\d+\.\d+", tests)), {version})
 
     def test_exe_smoke_validation_blocks_artifact_publication(self):
         workflow = (ROOT / '.github/workflows/windows-build.yml').read_text()
