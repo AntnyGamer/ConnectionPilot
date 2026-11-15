@@ -294,6 +294,25 @@ class WorkerRecoveryTests(unittest.TestCase):
             collect.assert_not_called()
         self.assertEqual(self.store.total_attempts(), 0)
 
+    def test_invalid_score_stops_before_feed_or_queued_profile_visit(self):
+        # A corrupt saved setting must not load LinkedIn even when the local
+        # queue already contains a candidate (bypassing search discovery).
+        queued_url = 'https://www.linkedin.com/in/queued-invalid-score/'
+        self.store.add(queued_url, 'Queued Invalid Score', 'government', 25)
+        for invalid in ('invalid', -1, 101, None):
+            with self.subTest(score=invalid):
+                self.config['filters'] = {'min_score': invalid}
+                self.page.goto.reset_mock()
+                self.context.chromium.launch_persistent_context.reset_mock()
+                with patch('automation.send_one') as send, \
+                     patch('automation.collect_results') as discover:
+                    self.assertEqual(self.run_fake(), 0)
+                self.page.goto.assert_not_called()
+                self.context.chromium.launch_persistent_context.assert_not_called()
+                send.assert_not_called()
+                discover.assert_not_called()
+                self.assertFalse(self.store.has_attempt(queued_url))
+
     def test_missing_campaign_phrases_stop_before_browser_startup(self):
         for field in ('searches', 'match_terms'):
             with self.subTest(field=field):
