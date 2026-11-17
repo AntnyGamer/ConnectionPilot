@@ -392,13 +392,13 @@ class WorkerRecoveryTests(unittest.TestCase):
                 page, self.store, ['government'], ['policy'],
                 self.stop, self.status.append, 200), 1)
             self.assertEqual(self.store.setting('page:government'), '17')
+            deferred = set()
             self.assertEqual(collect_results(
                 page, self.store, ['government'], ['policy'],
-                self.stop, self.status.append, 200), 0)
-            self.assertEqual(self.store.setting('page:government'), 'exhausted')
-            self.assertEqual(collect_results(
-                page, self.store, ['government'], ['policy'],
-                self.stop, self.status.append, 200), 0)
+                self.stop, self.status.append, 200,
+                deferred_searches=deferred), 0)
+            self.assertEqual(self.store.setting('page:government'), '17')
+            self.assertEqual(deferred, {'government'})
 
         self.assertEqual(len(page.visited), 2)
         self.assertIn('page=16', page.visited[0])
