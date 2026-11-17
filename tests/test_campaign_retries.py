@@ -406,6 +406,78 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.assertEqual(self.store.queued_count(), 1)
         self.assertTrue(self.store.setting('page-links:government').startswith('16:'))
 
+    def test_search_requests_are_spaced_across_discovery_passes(self):
+        clock = [100.0]
+        requests = []
+        last_request = [None]
+
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/policy-worker/'
+            def inner_text(self, **kwargs): return 'Policy Worker'
+            def evaluate(self, script): return 'Policy Worker, public policy'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, index): return Anchor()
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def goto(self, url, **kwargs):
+                requests.append((url, clock[0]))
+                return SimpleNamespace(status=200)
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return SimpleNamespace(all=lambda: [], count=lambda: 0)
+
+        def advance(seconds):
+            clock[0] += seconds
+            return False
+
+        with patch('automation.check_protection'), \
+             patch('automation.time.monotonic', side_effect=lambda: clock[0]), \
+             patch.object(self.stop, 'wait', side_effect=advance):
+            page = Page()
+            self.assertEqual(collect_results(
+                page, self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 100,
+                last_search_request=last_request), 1)
+            self.assertEqual(collect_results(
+                page, self.store, ['public policy'], ['policy'],
+                self.stop, self.status.append, 100,
+                last_search_request=last_request), 0)
+
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0][1], 100.0)
+        self.assertAlmostEqual(requests[1][1] - requests[0][1], 10.0)
+        self.assertAlmostEqual(last_request[0], requests[1][1])
+
+    def test_search_pause_during_interval_does_not_open_next_page(self):
+        clock = [100.0]
+        last_request = [100.0]
+        visits = []
+
+        class Page:
+            def goto(self, url, **kwargs):
+                visits.append(url)
+                raise AssertionError('Paused search must not navigate')
+
+        def pause_during_wait(seconds):
+            clock[0] += seconds
+            self.pause.set()
+            return False
+
+        with patch('automation.time.monotonic', side_effect=lambda: clock[0]), \
+             patch.object(self.stop, 'wait', side_effect=pause_during_wait):
+            self.assertEqual(collect_results(
+                Page(), self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 100,
+                pause_event=self.pause, last_search_request=last_request), 0)
+
+        self.assertEqual(visits, [])
+        self.assertEqual(last_request[0], 100.0)
+
     def test_search_fingerprint_renames_and_resets_with_phrase(self):
         self.store.set_settings({
             'page:Government': '23',
