@@ -155,10 +155,13 @@ def _normalized_score_terms(terms):
 
 
 def _contains_term(text: str, term: str) -> bool:
-    """Match a keyword or stem at a word start, not inside unrelated words."""
+    """Match longer word stems at a word start; short abbreviations as whole words."""
     start = text.find(term)
     while start != -1:
-        if start == 0 or not (text[start - 1].isalnum() or text[start - 1] == "_"):
+        end = start + len(term)
+        left = start == 0 or not (text[start - 1].isalnum() or text[start - 1] == "_")
+        right = (end == len(text) or not (text[end].isalnum() or text[end] == "_"))
+        if left and (len(term) > 2 or right):
             return True
         start = text.find(term, start + 1)
     return False
