@@ -28,6 +28,7 @@ RESTRICTION_TITLE = re.compile(
 
 
 EXHAUSTED_PAGE = "exhausted"
+MIN_SEARCH_INTERVAL_SECONDS = 10.0
 
 
 class StopRun(Exception):
@@ -221,7 +222,8 @@ def _validated_minimum_score(filters):
 
 
 def collect_results(page, store, searches, match_terms, stop_event, notify, target,
-                    filters=None, pause_event=None, deferred_searches=None):
+                    filters=None, pause_event=None, deferred_searches=None,
+                    last_search_request=None):
     """Collect a small batch from LinkedIn's own People search, using visible cards."""
     # Only one page per search per pass; state stored to avoid re-reading page one repeatedly.
     # A campaign close to its goal needs fewer leads than a new campaign.
@@ -274,6 +276,22 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             page_no = 1
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
+        # Enforce the interval between search requests, including across
+        # separate discovery passes in the same campaign.
+        if last_search_request is not None:
+            previous = last_search_request[0]
+            while previous is not None and time.monotonic() - previous < MIN_SEARCH_INTERVAL_SECONDS:
+                if stop_event.is_set():
+                    raise StopRun()
+                if pause_event is not None and pause_event.is_set():
+                    return added
+                remaining = MIN_SEARCH_INTERVAL_SECONDS - (time.monotonic() - previous)
+                stop_event.wait(min(remaining, 0.25))
+            if stop_event.is_set():
+                raise StopRun()
+            if pause_event is not None and pause_event.is_set():
+                return added
+            last_search_request[0] = time.monotonic()
         notify(f"Looking at page {page_no} for: {search}")
         try:
             response = page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
@@ -1008,6 +1026,7 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
             # These are only deferred in memory. A manual restart can retry
             # them, but one campaign run never reopens failed search pages.
             deferred_searches = set()
+            last_search_request = [None]
             while not stop_event.is_set():
                 if pause_event.is_set():
                     wait_or_stop(2, stop_event, pause_event, notify)
@@ -1054,7 +1073,8 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
                                       "Failed pages were not retried automatically.")
                     new_count = collect_results(page, store, active_searches, match_terms,
                                                 stop_event, notify, config["target"],
-                                                filters, pause_event, deferred_searches)
+                                                filters, pause_event, deferred_searches,
+                                                last_search_request)
                     on_update()
                     if pause_event.is_set():
                         continue
