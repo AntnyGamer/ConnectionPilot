@@ -707,7 +707,7 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     intro_text = header.inner_text(timeout=5000)
     degree_text = re.compile(r"^1st(?:[-\s]*degree(?:[-\s]*connection)?)?$", re.I)
     degree_badges = header.get_by_text(degree_text)
-    first_degree = bool(re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", intro_text, re.I))
+    first_degree = bool(re.search(r"\b1st[-\s]+degree[-\s]+connection\b", intro_text, re.I))
     if first_degree or any(badge.is_visible() for badge in degree_badges.all()[:30]):
         return "skipped", "Already a first-degree connection; no invitation needed."
     for label in ("Pending", "Remove connection"):
