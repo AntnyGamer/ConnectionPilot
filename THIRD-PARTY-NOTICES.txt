@@ -1,13 +1,13 @@
 CONNECTIONPILOT THIRD-PARTY NOTICES
 ===================================
-Applies to the Windows executable built from the ConnectionPilot v1.1.1
+Applies to the Windows executable built from the ConnectionPilot v1.1.2
 source and its Python/Playwright runtime. Build-only tools are
 identified separately below. This document does not change the
 license of ConnectionPilot's original code or branding.
 
 Packaged/direct:
 * CPython 3.13 runtime and standard library (PSF license and history)
-* playwright 1.64.1 (Apache-2.0, including a bundled Playwright driver)
+* playwright 1.65.2 (Apache-2.0, including a bundled Playwright driver)
 * tzdata 2026.6 (Apache-2.0; IANA time zone data)
 
 Packaged/transitive:
@@ -26,7 +26,7 @@ Build-only or partially embedded:
 
 Playwright's Python wheel includes its matching driver and Node.js
 runtime; upstream vendored components retain their original notices:
-https://github.com/microsoft/playwright-python/tree/v1.64.1/playwright/driver
+https://github.com/microsoft/playwright-python/tree/v1.65.2/playwright/driver
 https://github.com/nodejs/node/blob/main/LICENSE
 
 The application launches separately installed Chrome or Edge; it does
