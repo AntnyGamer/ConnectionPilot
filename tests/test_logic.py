@@ -54,9 +54,9 @@ class LogicTests(unittest.TestCase):
 
     def test_exclusions_and_filters_ignore_embedded_keyword_fragments(self):
         profile = 'Earth science researcher in New Jersey public policy'
-        self.assertTrue(passes_profile_filters(
+        self.assertFalse(passes_profile_filters(
             profile, 'Example, New Jersey',
-            {'min_score': 0, 'exclude': 'art', 'locations': 'nj'}, [])[0] is False)
+            {'min_score': 0, 'exclude': 'art', 'locations': 'nj'}, [])[0])
         self.assertTrue(passes_profile_filters(
             profile, 'Example, New Jersey',
             {'min_score': 0, 'exclude': 'art'}, [])[0])
@@ -385,6 +385,12 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(self.db.setting('page:Government Affairs'))
         self.db.rename_search_pages([('Unseen Phrase', 'unseen phrase')])
         self.assertIsNone(self.db.setting('page:unseen phrase'))
+
+    def test_clear_campaign_removes_search_fingerprints(self):
+        self.db.set_settings({'page:policy': '23', 'page-links:policy': 'sample-hash'})
+        self.db.clear_campaign_data()
+        self.assertIsNone(self.db.setting('page:policy'))
+        self.assertIsNone(self.db.setting('page-links:policy'))
 
     def test_foreign_key_constraint_is_enforced_on_every_connection(self):
         import sqlite3
