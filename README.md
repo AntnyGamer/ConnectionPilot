@@ -6,7 +6,7 @@
 
 ## Important limitations
 
-LinkedIn prohibits unauthorized automated invitations, regardless of delay or volume. Your account can be restricted or suspended. **The 500/day setting is only a local upper bound, not a LinkedIn-approved sending limit.** There is no known universal safe invitation cooldown, and **0.1 seconds does not make automated sending safe**. Actual sending against a live LinkedIn account is not verified and LinkedIn's changing interface may break the automation. Invitations also require recipients to accept; a request is not a confirmed connection.
+LinkedIn prohibits unauthorized automated invitations, regardless of delay or volume. Your account can be restricted or suspended. **The 500/day setting is only a local upper bound, not a LinkedIn-approved sending limit.** There is no known universally safe invitation cooldown; even longer cooldowns do not make automated sending safe. Actual sending against a live LinkedIn account is not verified and LinkedIn's changing interface may break the automation. Invitations also require recipients to accept; a request is not a confirmed connection.
 
 ## Install on Windows
 
@@ -28,9 +28,11 @@ The source ZIP is Python source, not a compiled `.exe`. The first source-based l
 |---|---|---|
 | Campaign goal | 200 | 1–5,000 total confirmed or uncertain attempts |
 | Daily invitation cap | 500 | 1–500 local attempt cap |
-| Cooldown | 90 seconds | 0.1–21,600 seconds, including fractions |
+| Cooldown | 90 seconds | 10–21,600 seconds, including fractions |
 | Sending window | 8 AM–8 PM Eastern | Fixed |
 | Advanced filters | Minimum relevance score 25 | Location, role, organization, school, sector, exclusions, degree and score |
+
+Successive search-result page requests are spaced at least 10 seconds apart within a running campaign; browser loading can make the actual interval longer.
 
 Search phrases and relevant profile terms are **empty on a first installation**. Once a campaign has been started, its saved phrases and terms reappear when the app is relaunched; installing a newer EXE does not clear them. Use **Clear campaign data** only if you intend to erase the local invitation history, which can allow previous recipients to be approached again.
 
