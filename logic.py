@@ -308,7 +308,7 @@ def safe_saved_int(value, default: int, minimum: int, maximum: int) -> int:
     return parsed if minimum <= parsed <= maximum else default
 
 
-MIN_COOLDOWN_SECONDS = 0.1
+MIN_COOLDOWN_SECONDS = 10.0
 MAX_COOLDOWN_SECONDS = 6 * 3600
 
 
