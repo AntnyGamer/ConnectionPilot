@@ -44,6 +44,36 @@ class LogicTests(unittest.TestCase):
         sample = 'Analyst working in politics'
         self.assertFalse(passes_profile_filters(sample, 'Analyst', {'locations':'New Jersey'}, ['politic'])[0])
         self.assertTrue(passes_profile_filters(sample, 'Analyst', {'min_score':0}, ['legislative'])[0])
+    def test_connection_degree_requires_relationship_evidence(self):
+        from logic import connection_degree_visible
+        for label in ('Example · 2nd · Analyst', 'Example • 2nd',
+                      'Example, 2nd degree connection', '2nd\\nAnalyst',
+                      '2nd degree'):
+            with self.subTest(valid=label):
+                self.assertTrue(connection_degree_visible(label, '2nd'))
+                self.assertTrue(passes_profile_filters(
+                    'public policy analyst', label,
+                    {'degree': '2nd only', 'min_score': 0})[0])
+        for label in ('Example · 2nd place winner', '2nd place winner',
+                      '2nd degree burn specialist', 'Example · 3rd · Analyst',
+                      'Second-degree connection not shown'):
+            with self.subTest(invalid=label):
+                self.assertFalse(connection_degree_visible(label, '2nd'))
+                self.assertFalse(passes_profile_filters(
+                    'public policy analyst', label,
+                    {'degree': '2nd only', 'min_score': 0})[0])
+
+    def test_civic_titles_do_not_change_verified_identity(self):
+        for labeled, plain in (('Mayor Jane Example', 'Jane Example'),
+                               ('Governor John Citizen', 'John Citizen'),
+                               ('Councilmember Sarah Jones', 'Sarah Jones')):
+            with self.subTest(labeled=labeled):
+                self.assertTrue(names_match(labeled, plain))
+                self.assertFalse(names_match(labeled, plain.replace('Jones', 'Smith')
+                                             .replace('Example', 'Different')
+                                             .replace('Citizen', 'Different')))
+        self.assertFalse(names_match('Mayor Smith', 'Smith'))
+
     def test_search_names_from_visible_and_accessible_labels(self):
         self.assertEqual(search_result_name("Jane Example"), "Jane Example")
         self.assertEqual(search_result_name("View profile", "View Jane Example's profile"), "Jane Example")
