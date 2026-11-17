@@ -44,6 +44,41 @@ class LogicTests(unittest.TestCase):
         sample = 'Analyst working in politics'
         self.assertFalse(passes_profile_filters(sample, 'Analyst', {'locations':'New Jersey'}, ['politic'])[0])
         self.assertTrue(passes_profile_filters(sample, 'Analyst', {'min_score':0}, ['legislative'])[0])
+    def test_word_start_matching_preserves_stems_without_false_substrings(self):
+        self.assertEqual(match_score('apolitical and nongovernmental work',
+                                     ['politic', 'government']), 0)
+        self.assertEqual(match_score('political government staff',
+                                     ['politic', 'government']), 50)
+        self.assertEqual(match_score('An enjoyable opportunity', ['nj']), 0)
+        self.assertEqual(match_score('NJ public policy analyst', ['nj', 'policy']), 50)
+
+    def test_exclusions_and_filters_ignore_embedded_keyword_fragments(self):
+        profile = 'Earth science researcher in New Jersey public policy'
+        self.assertTrue(passes_profile_filters(
+            profile, 'Example, New Jersey',
+            {'min_score': 0, 'exclude': 'art', 'locations': 'nj'}, [])[0] is False)
+        self.assertTrue(passes_profile_filters(
+            profile, 'Example, New Jersey',
+            {'min_score': 0, 'exclude': 'art'}, [])[0])
+        self.assertFalse(passes_profile_filters(
+            'Art and public policy', 'Art Director',
+            {'min_score': 0, 'exclude': 'art'}, [])[0])
+
+    def test_degree_filter_rejects_rankings_but_accepts_linkedin_badges(self):
+        filters = {'min_score': 0, 'degree': '2nd only'}
+        for header in ('Example, 2nd place winner',
+                       'Example, taught 2nd grade',
+                       'Example, reached 3rd degree connection'):
+            with self.subTest(header=header):
+                self.assertFalse(passes_profile_filters(
+                    'Public policy analyst', header, filters)[0])
+        for header in ('Example · 2nd · Policy Analyst',
+                       'Example • 2nd',
+                       'Example, 2nd degree connection'):
+            with self.subTest(header=header):
+                self.assertTrue(passes_profile_filters(
+                    'Public policy analyst', header, filters)[0])
+
     def test_search_names_from_visible_and_accessible_labels(self):
         self.assertEqual(search_result_name("Jane Example"), "Jane Example")
         self.assertEqual(search_result_name("View profile", "View Jane Example's profile"), "Jane Example")
