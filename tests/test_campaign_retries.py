@@ -287,7 +287,7 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.assertFalse(any('retry' in msg.lower() for msg in self.status))
 
     def test_exhausted_discovery_pages_stop_without_empty_retries(self):
-        self.store.set_setting('page:political science', '16')
+        self.store.set_setting('page:political science', 'exhausted')
         with patch('automation.collect_results',
                    side_effect=AssertionError('Nothing left to collect')) as collect:
             self.assertEqual(self.run_fake(), 0)
@@ -328,7 +328,7 @@ class WorkerRecoveryTests(unittest.TestCase):
                 self.context.chromium.launch_persistent_context.assert_not_called()
 
     def test_exhausted_discovery_skips_feed_and_browser_entirely(self):
-        self.store.set_setting('page:political science', '16')
+        self.store.set_setting('page:political science', 'exhausted')
         with patch('automation.collect_results') as collect:
             self.assertEqual(self.run_fake(), 0)
         collect.assert_not_called()
@@ -336,7 +336,7 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.context.chromium.launch_persistent_context.assert_not_called()
 
     def test_exhausted_search_still_processes_existing_queue(self):
-        self.store.set_setting('page:political science', '16')
+        self.store.set_setting('page:political science', 'exhausted')
         url = 'https://www.linkedin.com/in/queued-when-exhausted/'
         self.store.add(url, 'Queued When Exhausted', 'public policy', 25)
         with patch('automation.send_one', side_effect=StopRun('checked')) as send:
@@ -348,11 +348,76 @@ class WorkerRecoveryTests(unittest.TestCase):
 
     def test_one_remaining_discovery_page_still_runs(self):
         self.config['searches'].append('government')
-        self.store.set_setting('page:political science', '16')
+        self.store.set_setting('page:political science', 'exhausted')
         self.store.set_setting('page:government', '15')
         with patch('automation.collect_results', side_effect=StopRun('inspection')) as collect:
             self.run_fake()
             collect.assert_called_once()
+
+    def test_page_sixteen_is_not_mistaken_for_exhaustion(self):
+        # Previous versions stopped here; an upgraded installation should
+        # continue from its existing saved page without clearing history.
+        self.store.set_setting('page:political science', '16')
+        with patch('automation.collect_results', side_effect=StopRun('inspection')) as collect:
+            self.run_fake()
+        collect.assert_called_once()
+
+    def test_search_results_beyond_fifteen_stop_when_page_repeats(self):
+        self.store.set_setting('page:government', '16')
+
+        class Anchor:
+            def is_visible(self, **kwargs): return True
+            def get_attribute(self, key): return '/in/same-person/'
+            def inner_text(self, **kwargs): return 'Same Person'
+            def evaluate(self, script): return 'Same Person, government public policy'
+
+        class Anchors:
+            def count(self): return 1
+            def nth(self, index): return Anchor()
+
+        class Page:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self): self.visited = []
+            def goto(self, url, **kwargs):
+                self.visited.append(url)
+                return SimpleNamespace(status=200)
+            def locator(self, selector):
+                if selector == 'main a[href*="/in/"]':
+                    return Anchors()
+                return SimpleNamespace(all=lambda: [], count=lambda: 0)
+
+        page = Page()
+        with patch('automation.check_protection'):
+            self.assertEqual(collect_results(
+                page, self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 200), 1)
+            self.assertEqual(self.store.setting('page:government'), '17')
+            self.assertEqual(collect_results(
+                page, self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 200), 0)
+            self.assertEqual(self.store.setting('page:government'), 'exhausted')
+            self.assertEqual(collect_results(
+                page, self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 200), 0)
+
+        self.assertEqual(len(page.visited), 2)
+        self.assertIn('page=16', page.visited[0])
+        self.assertIn('page=17', page.visited[1])
+        self.assertEqual(self.store.queued_count(), 1)
+
+    def test_search_fingerprint_renames_and_resets_with_phrase(self):
+        self.store.set_settings({
+            'page:Government': '23',
+            'page-links:Government': 'last-page-signature',
+        })
+        self.store.rename_search_pages([('Government', 'government')])
+        self.assertEqual(self.store.setting('page:government'), '23')
+        self.assertEqual(self.store.setting('page-links:government'),
+                         'last-page-signature')
+        self.assertIsNone(self.store.setting('page-links:Government'))
+        self.store.reset_search_pages(['government'])
+        self.assertIsNone(self.store.setting('page:government'))
+        self.assertIsNone(self.store.setting('page-links:government'))
 
     def test_invalid_discovery_cursor_still_tries_safe_recovery(self):
         self.store.set_setting('page:political science', 'bad saved cursor')
