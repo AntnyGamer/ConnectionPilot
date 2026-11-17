@@ -103,7 +103,8 @@ def _name_parts(value):
     value = "".join(c for c in value if not unicodedata.combining(c))
     words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
     prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
-                "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+                "congresswoman", "congressman", "mayor", "governor", "councilmember",
+                "councilwoman", "councilman", "dr", "professor", "hon", "honorable"}
     while len(words) >= 3 and words[0] in prefixes:
         words.pop(0)
     return words
@@ -248,6 +249,19 @@ def matching_signature(filters: dict, terms: list[str]) -> tuple:
     )
 
 
+def connection_degree_visible(header_text: str, ordinal: str) -> bool:
+    """Require a relationship label or standalone badge, not a ranking."""
+    ordinal = re.escape(ordinal)
+    return bool(
+        re.search(r"\\b" + ordinal + r"[-\\s]+degree[-\\s]+connection\\b",
+                  header_text, re.I)
+        or re.search(r"(?m)^\\s*" + ordinal + r"(?:[-\\s]+degree)?\\s*$",
+                     header_text, re.I)
+        or re.search(r"[·•]\\s*" + ordinal + r"(?=\\s*(?:[·•]|$))",
+                     header_text, re.I)
+    )
+
+
 def passes_profile_filters(profile_text: str, header_text: str, filters: dict | None,
                            match_terms: list[str] | None = None) -> tuple[bool, str]:
     """Strictly require visible evidence for every enabled filter group."""
@@ -275,7 +289,7 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
     if degree != "Any":
         # Inspect intro/header only; don't mistake other members in recommendations.
         allowed = ("2nd",) if degree == "2nd only" else ("2nd", "3rd")
-        if not any(re.search(r"\b" + x + r"\b", header) for x in allowed):
+        if not any(connection_degree_visible(header_text or "", x) for x in allowed):
             return False, "Connection degree not confirmed in profile header."
     return True, "Visible profile matches enabled filters."
 
