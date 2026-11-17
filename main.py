@@ -39,7 +39,7 @@ from storage import Store
 from security import restrict_posix_data, safe_diagnostic
 
 APP_DIR = Path.home() / "ConnectionPilot"
-APP_VERSION = "v1.1.2"
+APP_VERSION = "v1.1.3"
 
 
 def _startup_storage_error(message):

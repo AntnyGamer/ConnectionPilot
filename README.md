@@ -1,8 +1,8 @@
 <img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="96" />
 
-# ConnectionPilot v1.1.2 — Windows
+# ConnectionPilot v1.1.3 — Windows
 
-**Version: v1.1.2.** The app, Windows EXE metadata and proposed GitHub release tag share this version. A draft PR does not create a public release. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
+**Version: v1.1.3.** The app, Windows EXE metadata and proposed GitHub release tag share this version. A draft PR does not create a public release. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
 
 ## Important limitations
 
@@ -139,7 +139,7 @@ See [GitHub repository protection setup](.github/PROTECTIONS.md) for the
 
 ## Dependency versions (verified November 2, 2026)
 
-- `playwright==1.64.1` — latest stable Python Playwright release, published October 22, 2026.
+- `playwright==1.65.2` — pinned Python Playwright runtime version.
 - `tzdata==2026.6` — latest published Python time zone data, released October 28, 2026.
 - GitHub Actions `actions/checkout@v7` and `actions/setup-python@v7` — current major versions.
 - `github/codeql-action@v4` — latest supported major version.
@@ -176,7 +176,7 @@ icons for existing taskbar pins; an old pin may retain an earlier image. The
 GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
 that GitHub setting.
-The displayed version is **v1.1.2**.
+The displayed version is **v1.1.3**.
 When that version's release tag already exists, a later successful main-branch build leaves the immutable published release untouched; the fresh compiled EXE is still available as a GitHub Actions build artifact. Publishing a new release requires intentionally updating the version and tag.
 
 The repo also contains a **Windows-only** GitHub Actions build at
@@ -185,7 +185,7 @@ that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
 embeds the icon and version metadata, and tests the actual executable's
 startup, bundled resources, timezone data, local SQLite storage and offline
 Chrome/Edge launch from a clean profile before publishing the build artifact. Download
-`ConnectionPilot-v1.1.2-Windows-EXE` from the successful workflow's Artifacts.
+`ConnectionPilot-v1.1.3-Windows-EXE` from the successful workflow's Artifacts.
 This is an unsigned executable and Windows SmartScreen may warn; no code
 signing certificate is bundled. The executable uses Chrome/Edge for Google
 sign-in and needs the relevant browser available on your PC.
@@ -205,8 +205,8 @@ Eastern-time schedule even on Windows computers without system IANA data.
 After a successful Windows build on a commit merged to `main`, GitHub Actions
 publishes the verified `ConnectionPilot.exe`, its SHA-256 checksum, and the matching PNG and ICO logo assets on the
 [latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
-After the v1.1.2 code is merged into `main` and its verified Windows build succeeds, the workflow publishes **v1.1.2**. Until then, the latest public release may still be v1.1.1.
-The future release tag is `v1.1.2`, bound to the verified source commit on `main`. PR builds do not publish this tag.
+After the v1.1.3 code is merged into `main` and its verified Windows build succeeds, the workflow publishes **v1.1.3**. Until then, the latest public release may still be an earlier version.
+The future release tag is `v1.1.3`, bound to the verified source commit on `main`. PR builds do not publish this tag.
 The workflow refuses to replace an existing release with a different binary. Pull request builds run checks and produce test artifacts but
 **never** publish a public release. Publishing uses a write-scoped token only
 after a successful Windows test/build job.
