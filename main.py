@@ -508,7 +508,7 @@ class App:
             if not searches or not matches:
                 raise ValueError("Search and match terms required")
         except (ValueError, AssertionError, tk.TclError):
-            messagebox.showerror("Invalid configuration", "Choose a goal (1–5000), daily cap (1–500), cooldown (0.1–21,600 seconds), and nonempty search/match terms.")
+            messagebox.showerror("Invalid configuration", "Choose valid campaign settings and nonempty search/match terms.")
             return
         # User explicitly starts the campaign with this button. A second
         # confirmation would defeat one-click operation; permanent risk
