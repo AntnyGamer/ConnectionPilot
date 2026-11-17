@@ -405,7 +405,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   }
                   return best;
                 }""") or ""
-                if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
+                if re.search(r"\b1st[-\s]+degree[-\s]+connection\b", snippet, re.I):
                     first_degree_links.add(url)
                     # Relationship is definitive for this profile URL.
                     # Other anchors for the same URL need no DOM inspection.
@@ -415,7 +415,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # excluded when a 2nd-only filter is enabled. Unspecified
                 # degree stays eligible for verification on the full profile.
                 if (second_only
-                        and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
+                        and re.search(r"\b3rd[-\s]+degree[-\s]+connection\b",
                                       snippet, re.I)):
                     degree_filtered_links.add(url)
                     # An explicitly disallowed connection degree is likewise
@@ -712,7 +712,7 @@ def send_one(page, profile, store, notify, filters=None, match_terms=None,
     intro_text = header.inner_text(timeout=5000)
     degree_text = re.compile(r"^1st(?:[-\s]*degree(?:[-\s]*connection)?)?$", re.I)
     degree_badges = header.get_by_text(degree_text)
-    first_degree = bool(re.search(r"\b1st(?:[-\s]*degree(?:[-\s]*connection)?)?\b", intro_text, re.I))
+    first_degree = bool(re.search(r"\b1st[-\s]+degree[-\s]+connection\b", intro_text, re.I))
     if first_degree or any(badge.is_visible() for badge in degree_badges.all()[:30]):
         return "skipped", "Already a first-degree connection; no invitation needed."
     for label in ("Pending", "Remove connection"):
