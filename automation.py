@@ -27,6 +27,9 @@ RESTRICTION_TITLE = re.compile(
     r"We['’]ve restricted your account temporarily)\s*$", re.I)
 
 
+EXHAUSTED_PAGE = "999999999"
+
+
 class StopRun(Exception):
     pass
 
@@ -480,7 +483,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             links_key = "page-links:" + search
             fingerprint = hashlib.sha256(
                 "\n".join(sorted(valid_profile_links)).encode("utf-8")).hexdigest()
-            if saved_pages.get(links_key) == fingerprint:
+            if saved_pages.get(links_key) == f"{page_no - 1}:{fingerprint}":
                 # Repeated results can be temporary. Do not permanently
                 # exhaust a phrase based on two identical page snapshots.
                 if deferred_searches is not None:
@@ -488,14 +491,14 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 notify(f"LinkedIn repeated the previous results for '{search}' "
                        f"on page {page_no}; keeping this page for a manual restart.")
             else:
-                store.set_settings({key: page_no + 1, links_key: fingerprint})
+                store.set_settings({key: page_no + 1, links_key: f"{page_no}:{fingerprint}"})
                 saved_pages[key] = str(page_no + 1)
-                saved_pages[links_key] = fingerprint
+                saved_pages[links_key] = f"{page_no}:{fingerprint}"
         else:
             # Invalid search-result cards are not a reason to navigate
             # indefinitely; keep this distinct from page number 16.
-            store.set_setting(key, "exhausted")
-            saved_pages[key] = "exhausted"
+            store.set_setting(key, EXHAUSTED_PAGE)
+            saved_pages[key] = EXHAUSTED_PAGE
             notify(f"No usable profile links found for '{search}' on page {page_no}; "
                    "stopping discovery for this phrase instead of rescanning.")
         # Report only information gathered during the single scan, without
@@ -913,8 +916,8 @@ def _read_initial_search_cursors(store, searches):
 
 
 def _cursor_exhausted(value):
-    """Only an explicit terminal marker means search pages are exhausted."""
-    return value == "exhausted"
+    """Numeric terminal marker also stays exhausted in older app versions."""
+    return str(value) == EXHAUSTED_PAGE
 
 
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
