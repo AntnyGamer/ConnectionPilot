@@ -289,7 +289,7 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
         # a LinkedIn connection. Require a badge or an explicit degree label.
         allowed = ("2nd",) if degree == "2nd only" else ("2nd", "3rd")
         if not any(re.search(r"\b" + x + r"[-\s]+degree(?:[-\s]+connection)?\b", header)
-                   or re.search(r"[·•]\s*" + x + r"\b", header)
+                   or re.search(r"[·•]\s*" + x + r"(?=\s*(?:[·•]|$))", header)
                    for x in allowed):
             return False, "Connection degree not confirmed in profile header."
     return True, "Visible profile matches enabled filters."
