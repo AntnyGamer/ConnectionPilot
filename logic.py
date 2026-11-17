@@ -103,7 +103,9 @@ def _name_parts(value):
     value = "".join(c for c in value if not unicodedata.combining(c))
     words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
     prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
-                "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+                "congresswoman", "congressman", "mayor", "governor", "councilmember",
+                "councilwoman", "councilman", "commissioner", "ambassador",
+                "dr", "professor", "hon", "honorable"}
     while len(words) >= 3 and words[0] in prefixes:
         words.pop(0)
     return words
