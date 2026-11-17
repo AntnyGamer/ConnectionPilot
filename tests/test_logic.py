@@ -47,7 +47,7 @@ class LogicTests(unittest.TestCase):
     def test_connection_degree_requires_relationship_evidence(self):
         from logic import connection_degree_visible
         for label in ('Example · 2nd · Analyst', 'Example • 2nd',
-                      'Example, 2nd degree connection', '2nd\\nAnalyst',
+                      'Example, 2nd degree connection', '2nd\nAnalyst',
                       '2nd degree'):
             with self.subTest(valid=label):
                 self.assertTrue(connection_degree_visible(label, '2nd'))
