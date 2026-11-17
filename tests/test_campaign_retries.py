@@ -287,7 +287,7 @@ class WorkerRecoveryTests(unittest.TestCase):
             self.assertFalse(any('retry' in msg.lower() for msg in self.status))
 
     def test_exhausted_discovery_pages_stop_without_empty_retries(self):
-        self.store.set_setting('page:political science', 'exhausted')
+        self.store.set_setting('page:political science', '999999999')
         with patch('automation.collect_results',
                    side_effect=AssertionError('Nothing left to collect')) as collect:
             self.assertEqual(self.run_fake(), 0)
@@ -328,7 +328,7 @@ class WorkerRecoveryTests(unittest.TestCase):
                 self.context.chromium.launch_persistent_context.assert_not_called()
 
     def test_exhausted_discovery_skips_feed_and_browser_entirely(self):
-        self.store.set_setting('page:political science', 'exhausted')
+        self.store.set_setting('page:political science', '999999999')
         with patch('automation.collect_results') as collect:
             self.assertEqual(self.run_fake(), 0)
         collect.assert_not_called()
@@ -336,7 +336,7 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.context.chromium.launch_persistent_context.assert_not_called()
 
     def test_exhausted_search_still_processes_existing_queue(self):
-        self.store.set_setting('page:political science', 'exhausted')
+        self.store.set_setting('page:political science', '999999999')
         url = 'https://www.linkedin.com/in/queued-when-exhausted/'
         self.store.add(url, 'Queued When Exhausted', 'public policy', 25)
         with patch('automation.send_one', side_effect=StopRun('checked')) as send:
@@ -348,7 +348,7 @@ class WorkerRecoveryTests(unittest.TestCase):
 
     def test_one_remaining_discovery_page_still_runs(self):
         self.config['searches'].append('government')
-        self.store.set_setting('page:political science', 'exhausted')
+        self.store.set_setting('page:political science', '999999999')
         self.store.set_setting('page:government', '15')
         with patch('automation.collect_results', side_effect=StopRun('inspection')) as collect:
             self.run_fake()
