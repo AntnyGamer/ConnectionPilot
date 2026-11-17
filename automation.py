@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import math
+import hashlib
 import threading
 import time
 from pathlib import Path
@@ -251,21 +252,23 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
     # Repeated or case-varied phrases should never cause duplicate page
     # navigations, even when a non-UI caller passes such a list.
     searches = unique_phrases(searches)
-    saved_pages = store.settings_for(["page:" + search for search in searches])
+    saved_pages = store.settings_for(
+        ["page:" + search for search in searches] +
+        ["page-links:" + search for search in searches])
     for search in searches:
         if stop_event.is_set():
             raise StopRun()
         if pause_event is not None and pause_event.is_set():
             return added
         key = "page:" + search
+        if _cursor_exhausted(saved_pages.get(key)):
+            continue
         try:
             page_no = int(saved_pages.get(key, "1"))
         except (TypeError, ValueError, OverflowError):
             page_no = 1
         if page_no < 1:
             page_no = 1
-        if page_no > 15:
-            continue
         search_url = "https://www.linkedin.com/search/results/people/?" + urlencode({
             "keywords": search, "origin": "GLOBAL_SEARCH_HEADER", "page": page_no})
         notify(f"Looking at page {page_no} for: {search}")
@@ -471,14 +474,26 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 "Not revisiting this search page automatically."
             )
         if valid_profile_links:
-            store.set_setting(key, page_no + 1)
-            saved_pages[key] = str(page_no + 1)
+            # LinkedIn may repeat its final results when asked for a page
+            # beyond the available range. Compare consecutive pages to avoid
+            # endlessly requesting different page numbers with identical data.
+            links_key = "page-links:" + search
+            fingerprint = hashlib.sha256(
+                "\n".join(sorted(valid_profile_links)).encode("utf-8")).hexdigest()
+            if saved_pages.get(links_key) == fingerprint:
+                store.set_setting(key, "exhausted")
+                saved_pages[key] = "exhausted"
+                notify(f"LinkedIn repeated the previous results for '{search}' "
+                       f"on page {page_no}; no more pages will be requested.")
+            else:
+                store.set_settings({key: page_no + 1, links_key: fingerprint})
+                saved_pages[key] = str(page_no + 1)
+                saved_pages[links_key] = fingerprint
         else:
-            # An unexpected page layout with zero usable member links must
-            # not trigger endless rediscovery of the same page.
-            # Avoid guessing that unrelated profile anchors are people.
-            store.set_setting(key, 16)
-            saved_pages[key] = "16"
+            # Invalid search-result cards are not a reason to navigate
+            # indefinitely; keep this distinct from page number 16.
+            store.set_setting(key, "exhausted")
+            saved_pages[key] = "exhausted"
             notify(f"No usable profile links found for '{search}' on page {page_no}; "
                    "stopping discovery for this phrase instead of rescanning.")
         # Report only information gathered during the single scan, without
@@ -896,11 +911,8 @@ def _read_initial_search_cursors(store, searches):
 
 
 def _cursor_exhausted(value):
-    """Unreadable cursors are recoverable, not proof of exhausted discovery."""
-    try:
-        return int(value) > 15
-    except (TypeError, ValueError, OverflowError):
-        return False
+    """Only an explicit terminal marker means search pages are exhausted."""
+    return value == "exhausted"
 
 
 def run_campaign(store, config, stop_event: threading.Event, pause_event: threading.Event, notify, on_update):
@@ -926,8 +938,9 @@ def run_campaign(store, config, stop_event: threading.Event, pause_event: thread
     if (initial_cursor_values is not None and searches and
             all(_cursor_exhausted(initial_cursor_values.get("page:" + s, "1"))
                 for s in searches)):
-        raise StopRun("No queued profiles and all search pages have already been inspected. "
-                      "Change search phrases to restart discovery; no LinkedIn page was loaded.")
+        raise StopRun("No queued profiles and all saved search phrases are marked exhausted. "
+                      "Change search phrases or matching filters to restart discovery; "
+                      "no LinkedIn page was loaded.")
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
