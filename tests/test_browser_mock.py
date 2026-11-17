@@ -675,7 +675,7 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(added, 0)
         self.assertEqual(page.visits, 1)
         self.assertIsNone(self.db.next_profile())
-        self.assertEqual(self.db.setting('page:policy'), '16')
+        self.assertEqual(self.db.setting('page:policy'), 'exhausted')
 
     def test_sparse_search_card_respects_explicit_score_threshold(self):
         # Do not silently increase automated profile inspections by
