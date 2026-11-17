@@ -47,6 +47,8 @@ class LogicTests(unittest.TestCase):
     def test_connection_degree_requires_relationship_evidence(self):
         from logic import connection_degree_visible
         for label in ('Example · 2nd · Analyst', 'Example • 2nd',
+                      'Example · 2nd degree · Analyst',
+                      'Example • 2nd-degree • Analyst',
                       'Example, 2nd degree connection', '2nd\nAnalyst',
                       '2nd degree'):
             with self.subTest(valid=label):
@@ -55,6 +57,7 @@ class LogicTests(unittest.TestCase):
                     'public policy analyst', label,
                     {'degree': '2nd only', 'min_score': 0})[0])
         for label in ('Example · 2nd place winner', '2nd place winner',
+                      'Example · 2nd degree black belt · Analyst',
                       '2nd degree burn specialist', 'Example · 3rd · Analyst',
                       'Second-degree connection not shown'):
             with self.subTest(invalid=label):
