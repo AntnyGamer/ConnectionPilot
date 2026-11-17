@@ -48,36 +48,40 @@ def normalize_profile(url: str) -> str | None:
         return None
 
 
+_PROFILE_ACTION_LABEL = re.compile(
+    r"(?:connect(?: with .+)?|follow(?: .+)?|message(?: .+)?|"
+    r"invite .+ to connect|pending|remove connection|send .+ a message)", re.I)
+_GENERIC_PROFILE_LABEL = re.compile(
+    r"(?:view|see|open)\s+(?:(?:full|public|member|linkedin|their|my|your|this)\s+)?profile", re.I)
+_NAMED_PROFILE_LABEL = re.compile(
+    r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile", re.I)
+
+
 def is_profile_action_label(value: str) -> bool:
     """Reject explicit action captions that are not member names.
 
     Named buttons such as "Connect with Jane Example" previously looked like
     valid search-result names and led to unnecessary profile visits.
     """
-    return bool(re.fullmatch(
-        r"(?:connect(?: with .+)?|follow(?: .+)?|message(?: .+)?|"
-        r"invite .+ to connect|pending|remove connection|send .+ a message)",
-        " ".join((value or "").split()), flags=re.I))
+    return bool(_PROFILE_ACTION_LABEL.fullmatch(" ".join((value or "").split())))
 
 
 def search_result_name(text: str, label: str = "") -> str | None:
     """Read a visible member name or an explicit accessible profile-link label."""
     generic = {"connect", "follow", "message"}
-    generic_profile = r"(?:view|see|open)\s+(?:(?:full|public|member|linkedin|their|my|your|this)\s+)?profile"
     lines = (text or "").splitlines()
     visible = " ".join(lines[0].split()) if lines else ""
-    pattern = r"(?:view|see|open)\s+(.+?)(?:['’]s)?\s+profile"
     if (visible.casefold() not in generic and not is_profile_action_label(visible)
-            and not re.fullmatch(generic_profile, visible, flags=re.I)):
-        match = re.fullmatch(pattern, visible, flags=re.I)
+            and not _GENERIC_PROFILE_LABEL.fullmatch(visible)):
+        match = _NAMED_PROFILE_LABEL.fullmatch(visible)
         name = match.group(1).strip() if match else visible
         if name and len(name) <= 90 and name.casefold() not in generic:
             return name
     accessible_text = " ".join((label or "").split())
     if (accessible_text.casefold() not in generic
             and not is_profile_action_label(accessible_text)
-            and not re.fullmatch(generic_profile, accessible_text, flags=re.I)):
-        accessible = re.fullmatch(pattern, accessible_text, flags=re.I)
+            and not _GENERIC_PROFILE_LABEL.fullmatch(accessible_text)):
+        accessible = _NAMED_PROFILE_LABEL.fullmatch(accessible_text)
         if accessible:
             name = accessible.group(1).strip()
             if name and len(name) <= 90 and name.casefold() not in generic:
@@ -103,7 +107,8 @@ def _name_parts(value):
     value = "".join(c for c in value if not unicodedata.combining(c))
     words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
     prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
-                "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
+                "congresswoman", "congressman", "mayor", "governor", "councilmember",
+                "councilwoman", "councilman", "dr", "professor", "hon", "honorable"}
     while len(words) >= 3 and words[0] in prefixes:
         words.pop(0)
     return words
@@ -248,6 +253,20 @@ def matching_signature(filters: dict, terms: list[str]) -> tuple:
     )
 
 
+def connection_degree_visible(header_text: str, ordinal: str) -> bool:
+    """Require a relationship label or standalone badge, not a ranking."""
+    ordinal = re.escape(ordinal)
+    return bool(
+        re.search(r"\b" + ordinal + r"[-\s]+degree[-\s]+connection\b",
+                  header_text, re.I)
+        or re.search(r"(?m)^\s*" + ordinal + r"(?:[-\s]+degree)?\s*$",
+                     header_text, re.I)
+        or re.search(r"[·•]\s*" + ordinal
+                     + r"(?:[-\s]+degree)?(?=\s*(?:[·•]|$))",
+                     header_text, re.I)
+    )
+
+
 def passes_profile_filters(profile_text: str, header_text: str, filters: dict | None,
                            match_terms: list[str] | None = None) -> tuple[bool, str]:
     """Strictly require visible evidence for every enabled filter group."""
@@ -275,7 +294,7 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
     if degree != "Any":
         # Inspect intro/header only; don't mistake other members in recommendations.
         allowed = ("2nd",) if degree == "2nd only" else ("2nd", "3rd")
-        if not any(re.search(r"\b" + x + r"\b", header) for x in allowed):
+        if not any(connection_degree_visible(header_text or "", x) for x in allowed):
             return False, "Connection degree not confirmed in profile header."
     return True, "Visible profile matches enabled filters."
 
@@ -289,7 +308,7 @@ def safe_saved_int(value, default: int, minimum: int, maximum: int) -> int:
     return parsed if minimum <= parsed <= maximum else default
 
 
-MIN_COOLDOWN_SECONDS = 0.1
+MIN_COOLDOWN_SECONDS = 10.0
 MAX_COOLDOWN_SECONDS = 6 * 3600
 
 

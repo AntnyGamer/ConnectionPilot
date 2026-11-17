@@ -1,4 +1,4 @@
-"""Build the ConnectionPilot v1.1.2 Windows executable. Run on Windows, never cross-compile from Linux."""
+"""Build the ConnectionPilot v1.1.3 Windows executable. Run on Windows, never cross-compile from Linux."""
 from __future__ import annotations
 import shutil
 import subprocess
@@ -19,7 +19,8 @@ def build():
             "--add-data", str(ROOT / "assets/connectionpilot.png") + ";assets",
             "--add-data", str(ROOT / "assets/connectionpilot-header.png") + ";assets",
             "--add-data", str(ROOT / "THIRD-PARTY-NOTICES.txt") + ";.",
-            "--collect-all", "playwright",
+            "--collect-data", "playwright",
+            "--collect-binaries", "playwright",
             # Keep the complete IANA rules, but only package tzdata's files:
             # PyInstaller compresses them inside its onefile archive.
             "--collect-data", "tzdata",

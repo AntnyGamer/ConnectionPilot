@@ -139,7 +139,9 @@ class Store:
     def reset_search_pages(self, searches):
         """Restart discovery when relevant keywords or filters change."""
         with self._conn() as db:
-            db.executemany("DELETE FROM settings WHERE key=?", (("page:" + s,) for s in searches))
+            db.executemany("DELETE FROM settings WHERE key=?",
+                           ((prefix + s,) for s in searches
+                            for prefix in ("page:", "page-links:")))
 
     def rename_search_pages(self, renames):
         """Preserve pagination when only a saved phrase's case changes.
@@ -151,14 +153,15 @@ class Store:
             for old_phrase, new_phrase in renames:
                 if old_phrase == new_phrase:
                     continue
-                old_key, new_key = "page:" + old_phrase, "page:" + new_phrase
-                row = db.execute("SELECT value FROM settings WHERE key=?", (old_key,)).fetchone()
-                if row is None:
-                    continue
-                db.execute("INSERT INTO settings(key, value) VALUES (?, ?) "
-                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                           (new_key, row[0]))
-                db.execute("DELETE FROM settings WHERE key=?", (old_key,))
+                for prefix in ("page:", "page-links:"):
+                    old_key, new_key = prefix + old_phrase, prefix + new_phrase
+                    row = db.execute("SELECT value FROM settings WHERE key=?", (old_key,)).fetchone()
+                    if row is None:
+                        continue
+                    db.execute("INSERT INTO settings(key, value) VALUES (?, ?) "
+                               "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                               (new_key, row[0]))
+                    db.execute("DELETE FROM settings WHERE key=?", (old_key,))
 
     def requeue_filtered(self):
         """Reconsider previously filtered profiles only when filters change."""
@@ -198,8 +201,18 @@ class Store:
             db.execute("DELETE FROM profiles")
             db.execute("DELETE FROM events")
             db.execute("""DELETE FROM settings WHERE key LIKE 'page:%'
+                OR key LIKE 'page-links:%'
                 OR key LIKE 'inspect_fail:%'
                 OR key IN ('run:matching', 'ui:searches', 'ui:matches')""")
+        # Deleting SQLite rows alone does not release disk pages. The reset is
+        # already confirmed and committed; compact the file without touching
+        # browser profiles or unrelated preferences.
+        try:
+            with self._conn() as db:
+                db.execute("VACUUM")
+        except sqlite3.OperationalError:
+            # A locked or nearly full disk must not undo the explicit reset.
+            pass
 
     def setting(self, key, default=None):
         with self._conn() as db:
@@ -312,13 +325,12 @@ class Store:
         """
         start, end = self._today_bounds()
         with self._conn() as db:
-            db.execute("BEGIN")
-            count = db.execute("""SELECT count(*) FROM attempts
-                WHERE initiated_at >= ? AND initiated_at < ?""",
-                (start, end)).fetchone()[0]
-            row = db.execute("""SELECT initiated_at FROM attempts
-                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchone()
-            return count, row[0] if row else None
+            return tuple(db.execute("""SELECT
+                (SELECT count(*) FROM attempts
+                 WHERE initiated_at >= ? AND initiated_at < ?),
+                (SELECT initiated_at FROM attempts
+                 ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1)""",
+                (start, end)).fetchone())
 
     def attempts_today(self):
         """Conservatively count unverified clicks as possible invitations."""

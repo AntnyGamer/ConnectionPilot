@@ -143,7 +143,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(len(page.visited), 2)
         self.assertIn('page=1', page.visited[0])
         self.assertIn('page=2', page.visited[1])
-        self.assertEqual(self.store.setting('page:government'), '3')
+        self.assertEqual(self.store.setting('page:government'), '2')
 
     def test_processed_candidates_loaded_once_for_multiple_search_phrases(self):
         from unittest.mock import patch
@@ -176,7 +176,10 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertEqual(processed.call_count, 1)
         queue_reads.assert_called_once()
-        batched.assert_called_once_with(['page:policy', 'page:government'])
+        batched.assert_called_once_with([
+            'page:policy', 'page:government',
+            'page-links:policy', 'page-links:government',
+        ])
         self.assertEqual(self.store.counts().get('queued'), 1)
 
     def test_ineligible_connection_degree_skips_duplicate_anchor_dom_reads(self):

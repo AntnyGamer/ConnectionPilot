@@ -1,12 +1,12 @@
 <img src="assets/connectionpilot.png" alt="ConnectionPilot briefcase and arrow logo" width="96" />
 
-# ConnectionPilot v1.1.2 — Windows
+# ConnectionPilot v1.1.3 — Windows
 
-**Version: v1.1.2.** The app, Windows EXE metadata and proposed GitHub release tag share this version. A draft PR does not create a public release. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
+**Version: v1.1.3.** The app, Windows EXE metadata and proposed GitHub release tag share this version. A draft PR does not create a public release. This is a third-party tool and is not affiliated with or endorsed by LinkedIn.
 
 ## Important limitations
 
-LinkedIn prohibits unauthorized automated invitations, regardless of delay or volume. Your account can be restricted or suspended. **The 500/day setting is only a local upper bound, not a LinkedIn-approved sending limit.** There is no known universal safe invitation cooldown, and **0.1 seconds does not make automated sending safe**. Actual sending against a live LinkedIn account is not verified and LinkedIn's changing interface may break the automation. Invitations also require recipients to accept; a request is not a confirmed connection.
+LinkedIn prohibits unauthorized automated invitations, regardless of delay or volume. Your account can be restricted or suspended. **The 500/day setting is only a local upper bound, not a LinkedIn-approved sending limit.** There is no known universally safe invitation cooldown; even longer cooldowns do not make automated sending safe. Actual sending against a live LinkedIn account is not verified and LinkedIn's changing interface may break the automation. Invitations also require recipients to accept; a request is not a confirmed connection.
 
 ## Install on Windows
 
@@ -28,9 +28,11 @@ The source ZIP is Python source, not a compiled `.exe`. The first source-based l
 |---|---|---|
 | Campaign goal | 200 | 1–5,000 total confirmed or uncertain attempts |
 | Daily invitation cap | 500 | 1–500 local attempt cap |
-| Cooldown | 90 seconds | 0.1–21,600 seconds, including fractions |
+| Cooldown | 90 seconds | 10–21,600 seconds, including fractions |
 | Sending window | 8 AM–8 PM Eastern | Fixed |
 | Advanced filters | Minimum relevance score 25 | Location, role, organization, school, sector, exclusions, degree and score |
+
+Successive search-result page requests are spaced at least 10 seconds apart within a running campaign; browser loading can make the actual interval longer.
 
 Search phrases and relevant profile terms are **empty on a first installation**. Once a campaign has been started, its saved phrases and terms reappear when the app is relaunched; installing a newer EXE does not clear them. Use **Clear campaign data** only if you intend to erase the local invitation history, which can allow previous recipients to be approached again.
 
@@ -46,7 +48,7 @@ Keywords separated by commas represent alternatives (OR) within one field; activ
 - Pressing **Pause** before a sending action begins prevents that action. A second pause/stop check prevents the final confirmation click if a dialog is open; the candidate stays under **Unconfirmed**. An action that was already clicked may still finish. Stop/pause does not override LinkedIn's restrictions.
 - It halts on recognized verification, invitation-limit or restriction screens; it does not solve challenges. Normal invitation confirmation modals are handled automatically when their controls are unambiguous; unsupported relationship or email verification is skipped without asking you to click. This does not guarantee unattended operation if LinkedIn logs you out or presents a mandatory challenge.
 - Ordinary search redirects, temporary HTTP 5xx errors, and search-page navigation timeouts defer the affected phrase **for the rest of the current run**, keep its saved page cursor for a future manually started run, and let other phrases continue. After a timeout, the app checks for a restriction notice before continuing. Redirected feed links are never treated as candidates. LinkedIn HTTP 401, 403, 429 and 999 responses stop the campaign instead of retrying blocked access.
-- Each successfully loaded results page is scanned once: unreadable cards or names are reported, but do **not** automatically trigger another page visit. Pages containing profile links advance even when some results are unreadable or irrelevant. A page with no usable profile links stops discovery for that phrase instead of reopening it automatically; a results page with no attached links is deferred after a single short wait.
+- Each successfully loaded results page is scanned once: unreadable cards or names are reported, but do **not** automatically trigger another page visit. Discovery no longer stops at an arbitrary 15-page cutoff: previously saved page 16 cursors can continue to later results. Consecutive pages with the same set of profile links defer that phrase until a manually started run, without permanently marking the page exhausted. A page with no usable profile links also stops discovery for that phrase instead of reopening it automatically; a results page with no attached links is deferred after a single short wait. Search phrases or matching-filter changes restart pagination while retaining the invitation-attempt history.
 - A previously processed profile is ignored when it reappears in another search result; queued profiles may still be rescored. Search cards are used to reject explicit first-degree connections, excluded keywords and explicit third-degree connections when a second-degree-only filter is selected. Unknown details are verified on the actual profile, not guessed.
 - A navigation/inspection error before clicking does **not** trigger automatic reloading of the same profile. The candidate is safely skipped without recording an invitation, and you can explicitly requeue it later using **Retry safe skips**. This reduces redundant profile views, but does not make unattended automation acceptable to LinkedIn.
 - An explicit LinkedIn restriction heading halts the campaign immediately, even on a long page. This avoids continuing after a detected restriction, but is not a guarantee that all restriction layouts will be recognized.
@@ -137,7 +139,7 @@ See [GitHub repository protection setup](.github/PROTECTIONS.md) for the
 
 ## Dependency versions (verified November 2, 2026)
 
-- `playwright==1.64.1` — latest stable Python Playwright release, published October 22, 2026.
+- `playwright==1.65.2` — pinned Python Playwright runtime version.
 - `tzdata==2026.6` — latest published Python time zone data, released October 28, 2026.
 - GitHub Actions `actions/checkout@v7` and `actions/setup-python@v7` — current major versions.
 - `github/codeql-action@v4` — latest supported major version.
@@ -174,7 +176,7 @@ icons for existing taskbar pins; an old pin may retain an earlier image. The
 GitHub's repository social preview must be uploaded separately in
 **Settings → General → Social preview**; committing the file does not change
 that GitHub setting.
-The displayed version is **v1.1.2**.
+The displayed version is **v1.1.3**.
 When that version's release tag already exists, a later successful main-branch build leaves the immutable published release untouched; the fresh compiled EXE is still available as a GitHub Actions build artifact. Publishing a new release requires intentionally updating the version and tag.
 
 The repo also contains a **Windows-only** GitHub Actions build at
@@ -183,7 +185,7 @@ that packages a `ConnectionPilot.exe` (Python not required on the user's PC),
 embeds the icon and version metadata, and tests the actual executable's
 startup, bundled resources, timezone data, local SQLite storage and offline
 Chrome/Edge launch from a clean profile before publishing the build artifact. Download
-`ConnectionPilot-v1.1.2-Windows-EXE` from the successful workflow's Artifacts.
+`ConnectionPilot-v1.1.3-Windows-EXE` from the successful workflow's Artifacts.
 This is an unsigned executable and Windows SmartScreen may warn; no code
 signing certificate is bundled. The executable uses Chrome/Edge for Google
 sign-in and needs the relevant browser available on your PC.
@@ -203,8 +205,8 @@ Eastern-time schedule even on Windows computers without system IANA data.
 After a successful Windows build on a commit merged to `main`, GitHub Actions
 publishes the verified `ConnectionPilot.exe`, its SHA-256 checksum, and the matching PNG and ICO logo assets on the
 [latest GitHub release](https://github.com/AntnyGamer/ConnectionPilot/releases/latest).
-After the v1.1.2 code is merged into `main` and its verified Windows build succeeds, the workflow publishes **v1.1.2**. Until then, the latest public release may still be v1.1.1.
-The future release tag is `v1.1.2`, bound to the verified source commit on `main`. PR builds do not publish this tag.
+After the v1.1.3 code is merged into `main` and its verified Windows build succeeds, the workflow publishes **v1.1.3**. Until then, the latest public release may still be an earlier version.
+The future release tag is `v1.1.3`, bound to the verified source commit on `main`. PR builds do not publish this tag.
 The workflow refuses to replace an existing release with a different binary. Pull request builds run checks and produce test artifacts but
 **never** publish a public release. Publishing uses a write-scoped token only
 after a successful Windows test/build job.

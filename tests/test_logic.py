@@ -44,6 +44,39 @@ class LogicTests(unittest.TestCase):
         sample = 'Analyst working in politics'
         self.assertFalse(passes_profile_filters(sample, 'Analyst', {'locations':'New Jersey'}, ['politic'])[0])
         self.assertTrue(passes_profile_filters(sample, 'Analyst', {'min_score':0}, ['legislative'])[0])
+    def test_connection_degree_requires_relationship_evidence(self):
+        from logic import connection_degree_visible
+        for label in ('Example · 2nd · Analyst', 'Example • 2nd',
+                      'Example · 2nd degree · Analyst',
+                      'Example • 2nd-degree • Analyst',
+                      'Example, 2nd degree connection', '2nd\nAnalyst',
+                      '2nd degree'):
+            with self.subTest(valid=label):
+                self.assertTrue(connection_degree_visible(label, '2nd'))
+                self.assertTrue(passes_profile_filters(
+                    'public policy analyst', label,
+                    {'degree': '2nd only', 'min_score': 0})[0])
+        for label in ('Example · 2nd place winner', '2nd place winner',
+                      'Example · 2nd degree black belt · Analyst',
+                      '2nd degree burn specialist', 'Example · 3rd · Analyst',
+                      'Second-degree connection not shown'):
+            with self.subTest(invalid=label):
+                self.assertFalse(connection_degree_visible(label, '2nd'))
+                self.assertFalse(passes_profile_filters(
+                    'public policy analyst', label,
+                    {'degree': '2nd only', 'min_score': 0})[0])
+
+    def test_civic_titles_do_not_change_verified_identity(self):
+        for labeled, plain in (('Mayor Jane Example', 'Jane Example'),
+                               ('Governor John Citizen', 'John Citizen'),
+                               ('Councilmember Sarah Jones', 'Sarah Jones')):
+            with self.subTest(labeled=labeled):
+                self.assertTrue(names_match(labeled, plain))
+                self.assertFalse(names_match(labeled, plain.replace('Jones', 'Smith')
+                                             .replace('Example', 'Different')
+                                             .replace('Citizen', 'Different')))
+        self.assertFalse(names_match('Mayor Smith', 'Smith'))
+
     def test_search_names_from_visible_and_accessible_labels(self):
         self.assertEqual(search_result_name("Jane Example"), "Jane Example")
         self.assertEqual(search_result_name("View profile", "View Jane Example's profile"), "Jane Example")
@@ -150,13 +183,15 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(theoretical_daily_capacity(5400), 8)  # Old 90 minutes.
         self.assertEqual(theoretical_daily_capacity(90), 480)  # Now 90 seconds.
         self.assertEqual(theoretical_daily_capacity(60), 720)
-        self.assertEqual(theoretical_daily_capacity(0.1), 432000)
+        self.assertEqual(theoretical_daily_capacity(10), 4320)
+        self.assertEqual(theoretical_daily_capacity(0.1), 0)
         self.assertEqual(theoretical_daily_capacity(21600), 2)
         self.assertEqual(theoretical_daily_capacity(0), 0)
     def test_fractional_seconds_validation(self):
-        for value in (0.1, 0.5, 1, 90, 5400, 21600, "0.1"):
+        for value in (10, 10.1, 90, 5400, 21600, "10"):
             self.assertTrue(valid_cooldown_seconds(value))
-        for value in (None, "bad", float("nan"), float("inf"), 0, -1, 0.099, 21601):
+        for value in (None, "bad", float("nan"), float("inf"), 0, -1,
+                      0.1, 0.5, 1, 9.999, "0.1", 21601):
             self.assertFalse(valid_cooldown_seconds(value))
     def test_reject_wrong_domain(self):
         self.assertIsNone(normalize_profile('https://www.linkedin.com.evil.test/in/a/'))
@@ -337,6 +372,31 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(self.db.setting('page:Government Affairs'))
         self.db.rename_search_pages([('Unseen Phrase', 'unseen phrase')])
         self.assertIsNone(self.db.setting('page:unseen phrase'))
+
+    def test_clear_campaign_removes_search_fingerprints(self):
+        self.db.set_settings({'page:policy': '23', 'page-links:policy': 'sample-hash'})
+        self.db.clear_campaign_data()
+        self.assertIsNone(self.db.setting('page:policy'))
+        self.assertIsNone(self.db.setting('page-links:policy'))
+
+    def test_clearing_campaign_reclaims_file_space_without_deleting_preferences(self):
+        saved = 'prefer dark appearance'
+        self.db.set_setting('ui:theme', saved)
+        self.db.add_many((
+            (f'https://www.linkedin.com/in/candidate-{i}/',
+             f'Candidate {i}', 'public policy analyst ' + str(i) + 'x' * 460, 25)
+            for i in range(400)
+        ))
+        before = self.db.path.stat().st_size
+        self.assertGreater(before, 100_000)
+        self.db.mark('https://www.linkedin.com/in/candidate-0/',
+                     'uncertain', 'Potential invitation')
+        self.db.clear_campaign_data()
+        after = self.db.path.stat().st_size
+        self.assertLess(after, before)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.db.queued_count(), 0)
+        self.assertEqual(self.db.setting('ui:theme'), saved)
 
     def test_foreign_key_constraint_is_enforced_on_every_connection(self):
         import sqlite3
@@ -643,6 +703,25 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(opened.call_count, 1)
         self.db.mark(url, 'sent', 'Confirmed')
         self.assertEqual(self.db.pacing_state(), expected)
+
+    def test_pacing_state_reads_one_consistent_sql_snapshot(self):
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        original_conn = self.db._conn
+        statements = []
+
+        @contextmanager
+        def traced_connection():
+            with original_conn() as db:
+                db.set_trace_callback(statements.append)
+                yield db
+
+        with patch.object(self.db, '_conn', side_effect=traced_connection):
+            self.assertEqual(self.db.pacing_state(), (0, None))
+        selects = [statement for statement in statements
+                   if statement.lstrip().upper().startswith('SELECT')]
+        self.assertEqual(len(selects), 1, selects)
 
     def test_uncertain_attempt_counts_toward_daily_cap_and_cooldown(self):
         a='https://www.linkedin.com/in/alice/'
