@@ -140,6 +140,19 @@ class LogicTests(unittest.TestCase):
         self.assertTrue(names_match("李 小龙", "李 小龙"))
         self.assertFalse(names_match("李 小龙", "王 小龙"))
 
+    def test_common_civic_titles_do_not_cause_false_name_mismatches(self):
+        for discovered, displayed in (
+            ('Mayor Jane Example', 'Jane Example'),
+            ('Governor Alex Citizen', 'Alex Citizen'),
+            ('Councilmember Pat Miller', 'Pat Miller'),
+            ('Commissioner Jordan Smith', 'Jordan Smith'),
+            ('Ambassador Morgan Davis', 'Morgan Davis'),
+        ):
+            with self.subTest(discovered=discovered):
+                self.assertTrue(names_match(discovered, displayed))
+        self.assertFalse(names_match('Mayor Jane Example', 'Jane Different'))
+        self.assertFalse(names_match('Mayor Smith', 'Smith'))
+
     def test_professional_suffixes_and_middle_initials_match_safely(self):
         self.assertTrue(names_match("Sarah E Jones, Esq.", "Sarah E. Jones"))
         self.assertTrue(names_match("Sarah E. Jones, Esq. · 2nd", "Sarah Elizabeth Jones"))
