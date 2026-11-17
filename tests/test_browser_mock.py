@@ -910,6 +910,15 @@ class BrowserMockTests(unittest.TestCase):
                 self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
                 self.db.clear_campaign_data()
 
+    def test_inline_first_degree_badge_is_not_invited(self):
+        doc = html("""<p>Test Example · 1st · Policy Analyst</p>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'skipped', reason)
+        self.assertIn('first-degree connection', reason)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
+
     def test_existing_first_degree_connection_is_never_invited(self):
         doc = html("""<span>1st</span><button>Message</button>
           <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
@@ -927,6 +936,23 @@ class BrowserMockTests(unittest.TestCase):
         self.assertIn('first-degree', reason)
         self.assertEqual(self.db.total_attempts(), 0)
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Connect')
+
+    def test_inline_first_degree_search_badge_is_not_queued(self):
+        doc = """<html><body><main><div>
+          <a href='/in/connected-member/'>Connected Member</a>
+          <p>Connected Member · 1st · Public policy analyst</p>
+          </div></main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return getattr(self.page, key)
+        added = collect_results(SearchPage(self.page), self.db,
+                                ['policy'], ['policy'], threading.Event(),
+                                lambda _: None, 100)
+        self.assertEqual(added, 0)
+        self.assertIsNone(self.db.next_profile())
+        self.assertEqual(self.db.setting('page:policy'), '2')
 
     def test_explicit_first_degree_search_result_is_not_queued(self):
         doc = """<html><body><main><div>
@@ -1408,6 +1434,8 @@ class BrowserMockTests(unittest.TestCase):
         doc = """<html><body><main>
             <div><a href='/in/third-person/'>Third Person</a>
                  <p>3rd degree connection · Public policy analyst in New Jersey</p></div>
+            <div><a href='/in/third-inline/'>Third Inline</a>
+                 <p>Third Inline · 3rd · Public policy analyst in New Jersey</p></div>
             <div><a href='/in/unknown-person/'>Unknown Person</a>
                  <p>Public policy analyst in New Jersey; degree not shown</p></div>
             </main></body></html>"""
