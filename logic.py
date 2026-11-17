@@ -261,7 +261,8 @@ def connection_degree_visible(header_text: str, ordinal: str) -> bool:
                   header_text, re.I)
         or re.search(r"(?m)^\s*" + ordinal + r"(?:[-\s]+degree)?\s*$",
                      header_text, re.I)
-        or re.search(r"[·•]\s*" + ordinal + r"(?=\s*(?:[·•]|$))",
+        or re.search(r"[·•]\s*" + ordinal
+                     + r"(?:[-\s]+degree)?(?=\s*(?:[·•]|$))",
                      header_text, re.I)
     )
 
