@@ -699,6 +699,25 @@ class StorageTests(unittest.TestCase):
         self.db.mark(url, 'sent', 'Confirmed')
         self.assertEqual(self.db.pacing_state(), expected)
 
+    def test_pacing_state_reads_one_consistent_sql_snapshot(self):
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        original_conn = self.db._conn
+        statements = []
+
+        @contextmanager
+        def traced_connection():
+            with original_conn() as db:
+                db.set_trace_callback(statements.append)
+                yield db
+
+        with patch.object(self.db, '_conn', side_effect=traced_connection):
+            self.assertEqual(self.db.pacing_state(), (0, None))
+        selects = [statement for statement in statements
+                   if statement.lstrip().upper().startswith('SELECT')]
+        self.assertEqual(len(selects), 1, selects)
+
     def test_uncertain_attempt_counts_toward_daily_cap_and_cooldown(self):
         a='https://www.linkedin.com/in/alice/'
         b='https://www.linkedin.com/in/bob/'
