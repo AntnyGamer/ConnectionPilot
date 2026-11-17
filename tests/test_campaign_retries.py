@@ -404,6 +404,17 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.assertIn('page=16', page.visited[0])
         self.assertIn('page=17', page.visited[1])
         self.assertEqual(self.store.queued_count(), 1)
+        self.assertTrue(self.store.setting('page-links:government').startswith('16:'))
+
+        # A downgrade can reset the page cursor without knowing about the
+        # newer fingerprint setting; the stale signature must not block page 1.
+        self.store.set_setting('page:government', 1)
+        with patch('automation.check_protection'):
+            self.assertEqual(collect_results(
+                page, self.store, ['government'], ['policy'],
+                self.stop, self.status.append, 200), 0)
+        self.assertEqual(self.store.setting('page:government'), '2')
+        self.assertEqual(len(page.visited), 3)
 
     def test_search_fingerprint_renames_and_resets_with_phrase(self):
         self.store.set_settings({
