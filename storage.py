@@ -204,6 +204,15 @@ class Store:
                 OR key LIKE 'page-links:%'
                 OR key LIKE 'inspect_fail:%'
                 OR key IN ('run:matching', 'ui:searches', 'ui:matches')""")
+        # Deleting SQLite rows alone does not release disk pages. The reset is
+        # already confirmed and committed; compact the file without touching
+        # browser profiles or unrelated preferences.
+        try:
+            with self._conn() as db:
+                db.execute("VACUUM")
+        except sqlite3.OperationalError:
+            # A locked or nearly full disk must not undo the explicit reset.
+            pass
 
     def setting(self, key, default=None):
         with self._conn() as db:
