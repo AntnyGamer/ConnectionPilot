@@ -103,9 +103,7 @@ def _name_parts(value):
     value = "".join(c for c in value if not unicodedata.combining(c))
     words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
     prefixes = {"assemblywoman", "assemblyman", "senator", "representative",
-                "congresswoman", "congressman", "mayor", "governor", "councilmember",
-                "councilwoman", "councilman", "commissioner", "ambassador",
-                "dr", "professor", "hon", "honorable"}
+                "congresswoman", "congressman", "dr", "professor", "hon", "honorable"}
     while len(words) >= 3 and words[0] in prefixes:
         words.pop(0)
     return words
@@ -154,25 +152,12 @@ def _normalized_score_terms(terms):
             if isinstance(term, str) and term.strip()}
 
 
-def _contains_term(text: str, term: str) -> bool:
-    """Match longer word stems at a word start; short abbreviations as whole words."""
-    start = text.find(term)
-    while start != -1:
-        end = start + len(term)
-        left = start == 0 or not (text[start - 1].isalnum() or text[start - 1] == "_")
-        right = (end == len(text) or not (text[end].isalnum() or text[end] == "_"))
-        if left and (len(term) > 2 or right):
-            return True
-        start = text.find(term, start + 1)
-    return False
-
-
 def _match_score_prepared(snippet, unique):
     words = (snippet or "").casefold()
     # Four distinct matches already reach the 100-point ceiling.
     hits = 0
     for term in unique:
-        if _contains_term(words, term):
+        if term in words:
             hits += 1
             if hits == 4:
                 return 100
@@ -282,18 +267,15 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
         # Check location and role in the person's introduction, not references
         # to earlier employers, schools, or unrelated people later on the page.
         source = header if field in ("locations", "titles") else text
-        if terms and not any(_contains_term(source, term) for term in terms):
+        if terms and not any(term in source for term in terms):
             return False, f"No visible match for {field} filter."
-    if f.get("exclude") and any(_contains_term(text, term) for term in clean_terms(f["exclude"])):
+    if f.get("exclude") and any(term in text for term in clean_terms(f["exclude"])):
         return False, "Profile contains an excluded keyword."
     degree = str(f.get("degree", "Any"))
     if degree != "Any":
-        # A number in a headline (such as "2nd place") is not evidence of
-        # a LinkedIn connection. Require a badge or an explicit degree label.
+        # Inspect intro/header only; don't mistake other members in recommendations.
         allowed = ("2nd",) if degree == "2nd only" else ("2nd", "3rd")
-        if not any(re.search(r"\b" + x + r"[-\s]+degree(?:[-\s]+connection)?\b", header)
-                   or re.search(r"[·•]\s*" + x + r"(?=\s*(?:[·•]|$))", header)
-                   for x in allowed):
+        if not any(re.search(r"\b" + x + r"\b", header) for x in allowed):
             return False, "Connection degree not confirmed in profile header."
     return True, "Visible profile matches enabled filters."
 
