@@ -898,6 +898,13 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(result, 'sent', reason)
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
 
+    def test_first_place_award_does_not_get_mistaken_for_connection(self):
+        doc = html("""<p>1st place winner in local policy competition</p>
+          <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
+        result, reason = self.run_mock(doc)
+        self.assertEqual(result, 'sent', reason)
+        self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
+
     def test_existing_first_degree_connection_is_never_invited(self):
         doc = html("""<span>1st</span><button>Message</button>
           <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
