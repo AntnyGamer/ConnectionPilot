@@ -249,7 +249,8 @@ class WorkerRecoveryTests(unittest.TestCase):
         visited = []
 
         def discover(page, store, searches, match_terms, stop_event, notify,
-                     target, filters, pause_event, deferred_searches):
+                     target, filters, pause_event, deferred_searches,
+                     last_search_request):
             visited.append(tuple(searches))
             if len(visited) == 1:
                 deferred_searches.add('political science')
@@ -270,7 +271,8 @@ class WorkerRecoveryTests(unittest.TestCase):
         self.config['searches'] = ['political science', 'government']
 
         def discover(page, store, searches, match_terms, stop_event, notify,
-                     target, filters, pause_event, deferred_searches):
+                     target, filters, pause_event, deferred_searches,
+                     last_search_request):
             deferred_searches.update(searches)
             return 0
 
