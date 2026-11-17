@@ -481,10 +481,12 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
             fingerprint = hashlib.sha256(
                 "\n".join(sorted(valid_profile_links)).encode("utf-8")).hexdigest()
             if saved_pages.get(links_key) == fingerprint:
-                store.set_setting(key, "exhausted")
-                saved_pages[key] = "exhausted"
+                # Repeated results can be temporary. Do not permanently
+                # exhaust a phrase based on two identical page snapshots.
+                if deferred_searches is not None:
+                    deferred_searches.add(search)
                 notify(f"LinkedIn repeated the previous results for '{search}' "
-                       f"on page {page_no}; no more pages will be requested.")
+                       f"on page {page_no}; keeping this page for a manual restart.")
             else:
                 store.set_settings({key: page_no + 1, links_key: fingerprint})
                 saved_pages[key] = str(page_no + 1)
