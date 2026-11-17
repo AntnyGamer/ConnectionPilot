@@ -201,6 +201,7 @@ class Store:
             db.execute("DELETE FROM profiles")
             db.execute("DELETE FROM events")
             db.execute("""DELETE FROM settings WHERE key LIKE 'page:%'
+                OR key LIKE 'page-links:%'
                 OR key LIKE 'inspect_fail:%'
                 OR key IN ('run:matching', 'ui:searches', 'ui:matches')""")
 
