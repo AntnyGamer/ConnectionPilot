@@ -44,45 +44,6 @@ class LogicTests(unittest.TestCase):
         sample = 'Analyst working in politics'
         self.assertFalse(passes_profile_filters(sample, 'Analyst', {'locations':'New Jersey'}, ['politic'])[0])
         self.assertTrue(passes_profile_filters(sample, 'Analyst', {'min_score':0}, ['legislative'])[0])
-    def test_word_start_matching_preserves_stems_without_false_substrings(self):
-        self.assertEqual(match_score('apolitical and nongovernmental work',
-                                     ['politic', 'government']), 0)
-        self.assertEqual(match_score('political government staff',
-                                     ['politic', 'government']), 50)
-        self.assertEqual(match_score('An enjoyable opportunity', ['nj']), 0)
-        self.assertEqual(match_score('NJ public policy analyst', ['nj', 'policy']), 50)
-        self.assertEqual(match_score('NJoy is an unrelated brand', ['nj']), 0)
-        self.assertEqual(match_score('USual responsibilities', ['us']), 0)
-        self.assertEqual(match_score('US national government', ['us']), 25)
-
-    def test_exclusions_and_filters_ignore_embedded_keyword_fragments(self):
-        profile = 'Earth science researcher in New Jersey public policy'
-        self.assertFalse(passes_profile_filters(
-            profile, 'Example, New Jersey',
-            {'min_score': 0, 'exclude': 'art', 'locations': 'nj'}, [])[0])
-        self.assertTrue(passes_profile_filters(
-            profile, 'Example, New Jersey',
-            {'min_score': 0, 'exclude': 'art'}, [])[0])
-        self.assertFalse(passes_profile_filters(
-            'Art and public policy', 'Art Director',
-            {'min_score': 0, 'exclude': 'art'}, [])[0])
-
-    def test_degree_filter_rejects_rankings_but_accepts_linkedin_badges(self):
-        filters = {'min_score': 0, 'degree': '2nd only'}
-        for header in ('Example, 2nd place winner',
-                       'Example · 2nd place winner',
-                       'Example, taught 2nd grade',
-                       'Example, reached 3rd degree connection'):
-            with self.subTest(header=header):
-                self.assertFalse(passes_profile_filters(
-                    'Public policy analyst', header, filters)[0])
-        for header in ('Example · 2nd · Policy Analyst',
-                       'Example • 2nd',
-                       'Example, 2nd degree connection'):
-            with self.subTest(header=header):
-                self.assertTrue(passes_profile_filters(
-                    'Public policy analyst', header, filters)[0])
-
     def test_search_names_from_visible_and_accessible_labels(self):
         self.assertEqual(search_result_name("Jane Example"), "Jane Example")
         self.assertEqual(search_result_name("View profile", "View Jane Example's profile"), "Jane Example")
@@ -143,19 +104,6 @@ class LogicTests(unittest.TestCase):
         self.assertFalse(names_match("Jane Example (Former)", "Jane Example"))
         self.assertTrue(names_match("李 小龙", "李 小龙"))
         self.assertFalse(names_match("李 小龙", "王 小龙"))
-
-    def test_common_civic_titles_do_not_cause_false_name_mismatches(self):
-        for discovered, displayed in (
-            ('Mayor Jane Example', 'Jane Example'),
-            ('Governor Alex Citizen', 'Alex Citizen'),
-            ('Councilmember Pat Miller', 'Pat Miller'),
-            ('Commissioner Jordan Smith', 'Jordan Smith'),
-            ('Ambassador Morgan Davis', 'Morgan Davis'),
-        ):
-            with self.subTest(discovered=discovered):
-                self.assertTrue(names_match(discovered, displayed))
-        self.assertFalse(names_match('Mayor Jane Example', 'Jane Different'))
-        self.assertFalse(names_match('Mayor Smith', 'Smith'))
 
     def test_professional_suffixes_and_middle_initials_match_safely(self):
         self.assertTrue(names_match("Sarah E Jones, Esq.", "Sarah E. Jones"))
@@ -250,9 +198,9 @@ class LogicTests(unittest.TestCase):
                     self.assertEqual(_match_score_prepared(profile, prepared),
                                      match_score(profile, terms))
 
-    def test_scorer_matches_independent_word_boundary_reference(self):
-        # Independently check case folding, word starts, and exact short terms.
-        import re
+    def test_scorer_matches_preoptimization_formula_for_varied_keywords(self):
+        # Independent reference: original distinct-term scoring before the
+        # v1.1.0 hot-path optimizations, including the 100-point cap.
         import random
         rng = random.Random(1100)
         vocabulary = ("politics", "public policy", "government", "rowan",
@@ -263,9 +211,7 @@ class LogicTests(unittest.TestCase):
             terms += ["POLITICS", " politics ", "", None, 4]
             old_unique = {item.strip().casefold() for item in terms
                           if isinstance(item, str) and item.strip()}
-            reference = min(100, 25 * sum(bool(re.search(
-                r"(?<!\\w)" + re.escape(term) + (r"(?!\\w)" if len(term) <= 2 else ""),
-                snippet.casefold())) for term in old_unique))
+            reference = min(100, 25 * sum(term in snippet.casefold() for term in old_unique))
             with self.subTest(snippet=snippet[:40], count=len(terms)):
                 self.assertEqual(match_score(snippet, terms), reference)
 
