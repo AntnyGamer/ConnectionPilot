@@ -325,13 +325,12 @@ class Store:
         """
         start, end = self._today_bounds()
         with self._conn() as db:
-            db.execute("BEGIN")
-            count = db.execute("""SELECT count(*) FROM attempts
-                WHERE initiated_at >= ? AND initiated_at < ?""",
-                (start, end)).fetchone()[0]
-            row = db.execute("""SELECT initiated_at FROM attempts
-                ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1""").fetchone()
-            return count, row[0] if row else None
+            return tuple(db.execute("""SELECT
+                (SELECT count(*) FROM attempts
+                 WHERE initiated_at >= ? AND initiated_at < ?),
+                (SELECT initiated_at FROM attempts
+                 ORDER BY julianday(initiated_at) DESC, rowid DESC LIMIT 1)""",
+                (start, end)).fetchone())
 
     def attempts_today(self):
         """Conservatively count unverified clicks as possible invitations."""
