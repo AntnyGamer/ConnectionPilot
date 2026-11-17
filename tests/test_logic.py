@@ -51,6 +51,9 @@ class LogicTests(unittest.TestCase):
                                      ['politic', 'government']), 50)
         self.assertEqual(match_score('An enjoyable opportunity', ['nj']), 0)
         self.assertEqual(match_score('NJ public policy analyst', ['nj', 'policy']), 50)
+        self.assertEqual(match_score('NJoy is an unrelated brand', ['nj']), 0)
+        self.assertEqual(match_score('USual responsibilities', ['us']), 0)
+        self.assertEqual(match_score('US national government', ['us']), 25)
 
     def test_exclusions_and_filters_ignore_embedded_keyword_fragments(self):
         profile = 'Earth science researcher in New Jersey public policy'
