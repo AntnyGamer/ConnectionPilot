@@ -183,13 +183,15 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(theoretical_daily_capacity(5400), 8)  # Old 90 minutes.
         self.assertEqual(theoretical_daily_capacity(90), 480)  # Now 90 seconds.
         self.assertEqual(theoretical_daily_capacity(60), 720)
-        self.assertEqual(theoretical_daily_capacity(0.1), 432000)
+        self.assertEqual(theoretical_daily_capacity(10), 4320)
+        self.assertEqual(theoretical_daily_capacity(0.1), 0)
         self.assertEqual(theoretical_daily_capacity(21600), 2)
         self.assertEqual(theoretical_daily_capacity(0), 0)
     def test_fractional_seconds_validation(self):
-        for value in (0.1, 0.5, 1, 90, 5400, 21600, "0.1"):
+        for value in (10, 10.1, 90, 5400, 21600, "10"):
             self.assertTrue(valid_cooldown_seconds(value))
-        for value in (None, "bad", float("nan"), float("inf"), 0, -1, 0.099, 21601):
+        for value in (None, "bad", float("nan"), float("inf"), 0, -1,
+                      0.1, 0.5, 1, 9.999, "0.1", 21601):
             self.assertFalse(valid_cooldown_seconds(value))
     def test_reject_wrong_domain(self):
         self.assertIsNone(normalize_profile('https://www.linkedin.com.evil.test/in/a/'))
