@@ -899,7 +899,7 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#connect').inner_text(), 'Pending')
 
     def test_first_place_award_does_not_get_mistaken_for_connection(self):
-        doc = html("""<p>1st place winner in local policy competition</p>
+        doc = html("""<p>1st place winner and researcher in 1st degree burns</p>
           <button id="connect" onclick="this.textContent='Pending'">Connect</button>""")
         result, reason = self.run_mock(doc)
         self.assertEqual(result, 'sent', reason)
