@@ -89,6 +89,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('--smoke-test', workflow)
         self.assertLess(workflow.index('Smoke-test the actual packaged EXE offline'),
                         workflow.index('Upload Windows EXE'))
+        self.assertIn('"--collect-data", "playwright"', builder)
+        self.assertIn('"--collect-binaries", "playwright"', builder)
+        self.assertNotIn('"--collect-all", "playwright"', builder)
         self.assertIn('"--collect-data", "tzdata"', builder)
         self.assertNotIn('"--collect-all", "tzdata"', builder)
         self.assertIn('def smoke_test_exe(result_path):', app)
