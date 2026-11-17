@@ -67,6 +67,7 @@ class LogicTests(unittest.TestCase):
     def test_degree_filter_rejects_rankings_but_accepts_linkedin_badges(self):
         filters = {'min_score': 0, 'degree': '2nd only'}
         for header in ('Example, 2nd place winner',
+                       'Example · 2nd place winner',
                        'Example, taught 2nd grade',
                        'Example, reached 3rd degree connection'):
             with self.subTest(header=header):
