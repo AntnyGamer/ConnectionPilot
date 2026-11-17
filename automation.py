@@ -402,7 +402,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                   }
                   return best;
                 }""") or ""
-                if re.search(r"\b1st[-\s]+degree(?:[-\s]+connection)?\b", snippet, re.I):
+                if re.search(r"\b1st[-\s]+degree[-\s]+connection\b", snippet, re.I):
                     first_degree_links.add(url)
                     # Relationship is definitive for this profile URL.
                     # Other anchors for the same URL need no DOM inspection.
@@ -412,7 +412,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                 # excluded when a 2nd-only filter is enabled. Unspecified
                 # degree stays eligible for verification on the full profile.
                 if (second_only
-                        and re.search(r"\b3rd[-\s]+degree(?:[-\s]+connection)?\b",
+                        and re.search(r"\b3rd[-\s]+degree[-\s]+connection\b",
                                       snippet, re.I)):
                     degree_filtered_links.add(url)
                     # An explicitly disallowed connection degree is likewise
