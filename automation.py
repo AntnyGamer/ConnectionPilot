@@ -27,7 +27,7 @@ RESTRICTION_TITLE = re.compile(
     r"We['’]ve restricted your account temporarily)\s*$", re.I)
 
 
-EXHAUSTED_PAGE = "999999999"
+EXHAUSTED_PAGE = "exhausted"
 
 
 class StopRun(Exception):
@@ -916,7 +916,7 @@ def _read_initial_search_cursors(store, searches):
 
 
 def _cursor_exhausted(value):
-    """Numeric terminal marker also stays exhausted in older app versions."""
+    """Only an explicit terminal marker means a search is exhausted."""
     return str(value) == EXHAUSTED_PAGE
 
 
