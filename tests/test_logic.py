@@ -374,6 +374,25 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(self.db.setting('page:policy'))
         self.assertIsNone(self.db.setting('page-links:policy'))
 
+    def test_clearing_campaign_reclaims_file_space_without_deleting_preferences(self):
+        saved = 'prefer dark appearance'
+        self.db.set_setting('ui:theme', saved)
+        self.db.add_many((
+            (f'https://www.linkedin.com/in/candidate-{i}/',
+             f'Candidate {i}', 'public policy analyst ' + str(i) + 'x' * 460, 25)
+            for i in range(400)
+        ))
+        before = self.db.path.stat().st_size
+        self.assertGreater(before, 100_000)
+        self.db.mark('https://www.linkedin.com/in/candidate-0/',
+                     'uncertain', 'Potential invitation')
+        self.db.clear_campaign_data()
+        after = self.db.path.stat().st_size
+        self.assertLess(after, before)
+        self.assertEqual(self.db.total_attempts(), 0)
+        self.assertEqual(self.db.queued_count(), 0)
+        self.assertEqual(self.db.setting('ui:theme'), saved)
+
     def test_foreign_key_constraint_is_enforced_on_every_connection(self):
         import sqlite3
         with self.db._conn() as db:
