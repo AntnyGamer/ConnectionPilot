@@ -152,12 +152,22 @@ def _normalized_score_terms(terms):
             if isinstance(term, str) and term.strip()}
 
 
+def _contains_term(text: str, term: str) -> bool:
+    """Match a keyword or stem at a word start, not inside unrelated words."""
+    start = text.find(term)
+    while start != -1:
+        if start == 0 or not (text[start - 1].isalnum() or text[start - 1] == "_"):
+            return True
+        start = text.find(term, start + 1)
+    return False
+
+
 def _match_score_prepared(snippet, unique):
     words = (snippet or "").casefold()
     # Four distinct matches already reach the 100-point ceiling.
     hits = 0
     for term in unique:
-        if term in words:
+        if _contains_term(words, term):
             hits += 1
             if hits == 4:
                 return 100
@@ -267,15 +277,18 @@ def passes_profile_filters(profile_text: str, header_text: str, filters: dict | 
         # Check location and role in the person's introduction, not references
         # to earlier employers, schools, or unrelated people later on the page.
         source = header if field in ("locations", "titles") else text
-        if terms and not any(term in source for term in terms):
+        if terms and not any(_contains_term(source, term) for term in terms):
             return False, f"No visible match for {field} filter."
-    if f.get("exclude") and any(term in text for term in clean_terms(f["exclude"])):
+    if f.get("exclude") and any(_contains_term(text, term) for term in clean_terms(f["exclude"])):
         return False, "Profile contains an excluded keyword."
     degree = str(f.get("degree", "Any"))
     if degree != "Any":
-        # Inspect intro/header only; don't mistake other members in recommendations.
+        # A number in a headline (such as "2nd place") is not evidence of
+        # a LinkedIn connection. Require a badge or an explicit degree label.
         allowed = ("2nd",) if degree == "2nd only" else ("2nd", "3rd")
-        if not any(re.search(r"\b" + x + r"\b", header) for x in allowed):
+        if not any(re.search(r"\b" + x + r"[-\s]+degree(?:[-\s]+connection)?\b", header)
+                   or re.search(r"[·•]\s*" + x + r"\b", header)
+                   for x in allowed):
             return False, "Connection degree not confirmed in profile header."
     return True, "Visible profile matches enabled filters."
 
