@@ -1380,6 +1380,24 @@ class BrowserMockTests(unittest.TestCase):
         self.assertEqual(self.db.counts().get('skipped'), 1)
         self.assertEqual(self.db.setting('page:government'), '2')
 
+    def test_unrelated_degree_descriptions_are_not_connection_badges(self):
+        doc = """<html><body><main>
+            <div><a href='/in/award-person/'>Award Person</a>
+                 <p>1st degree burn researcher working in public policy</p></div>
+            <div><a href='/in/karate-person/'>Karate Person</a>
+                 <p>3rd degree black belt working in public policy</p></div>
+            </main></body></html>"""
+        class SearchPage:
+            url = 'https://www.linkedin.com/search/results/people/'
+            def __init__(self, page): self.page = page
+            def goto(self, *args, **kwargs): self.page.set_content(doc)
+            def __getattr__(self, key): return getattr(self.page, key)
+        added = collect_results(SearchPage(self.page), self.db, ['policy'],
+                                ['policy'], threading.Event(), lambda _: None, 100,
+                                {'min_score': 25, 'degree': '2nd only'})
+        self.assertEqual(added, 2)
+        self.assertEqual(self.db.queued_count(), 2)
+
     def test_explicit_third_degree_card_is_filtered_for_second_only(self):
         doc = """<html><body><main>
             <div><a href='/in/third-person/'>Third Person</a>
