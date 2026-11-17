@@ -13,7 +13,7 @@ from google_login import browser_profile, find_browser, SUPPORTED
 from security import is_trusted_linkedin_page, safe_diagnostic
 from process_env import prepare_external_processes
 
-from logic import (has_stop_signal, in_work_hours, local_now, _match_score_prepared, _normalized_score_terms,
+from logic import (has_stop_signal, in_work_hours, local_now, _match_score_prepared, _normalized_score_terms, _contains_term,
                    clean_terms, _name_parts, _name_parts_match, normalize_profile, passes_profile_filters, search_result_name,
                    seconds_until_next_send, seconds_until_tomorrow, seconds_until_work_hours,
                    unique_phrases)
@@ -430,7 +430,7 @@ def collect_results(page, store, searches, match_terms, stop_event, notify, targ
                     exclusions = clean_terms(settings.get("exclude"))
                 if exclusions:
                     folded_snippet = snippet.casefold()
-                    if any(term in folded_snippet for term in exclusions):
+                    if any(_contains_term(folded_snippet, term) for term in exclusions):
                         excluded_links.add(url)
                         continue
                 seen_this_page.add(url)
