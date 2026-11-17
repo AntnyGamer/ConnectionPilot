@@ -253,11 +253,11 @@ def connection_degree_visible(header_text: str, ordinal: str) -> bool:
     """Require a relationship label or standalone badge, not a ranking."""
     ordinal = re.escape(ordinal)
     return bool(
-        re.search(r"\\b" + ordinal + r"[-\\s]+degree[-\\s]+connection\\b",
+        re.search(r"\b" + ordinal + r"[-\s]+degree[-\s]+connection\b",
                   header_text, re.I)
-        or re.search(r"(?m)^\\s*" + ordinal + r"(?:[-\\s]+degree)?\\s*$",
+        or re.search(r"(?m)^\s*" + ordinal + r"(?:[-\s]+degree)?\s*$",
                      header_text, re.I)
-        or re.search(r"[·•]\\s*" + ordinal + r"(?=\\s*(?:[·•]|$))",
+        or re.search(r"[·•]\s*" + ordinal + r"(?=\s*(?:[·•]|$))",
                      header_text, re.I)
     )
 
