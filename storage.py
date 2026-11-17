@@ -139,7 +139,9 @@ class Store:
     def reset_search_pages(self, searches):
         """Restart discovery when relevant keywords or filters change."""
         with self._conn() as db:
-            db.executemany("DELETE FROM settings WHERE key=?", (("page:" + s,) for s in searches))
+            db.executemany("DELETE FROM settings WHERE key=?",
+                           ((prefix + s,) for s in searches
+                            for prefix in ("page:", "page-links:")))
 
     def rename_search_pages(self, renames):
         """Preserve pagination when only a saved phrase's case changes.
@@ -151,14 +153,15 @@ class Store:
             for old_phrase, new_phrase in renames:
                 if old_phrase == new_phrase:
                     continue
-                old_key, new_key = "page:" + old_phrase, "page:" + new_phrase
-                row = db.execute("SELECT value FROM settings WHERE key=?", (old_key,)).fetchone()
-                if row is None:
-                    continue
-                db.execute("INSERT INTO settings(key, value) VALUES (?, ?) "
-                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                           (new_key, row[0]))
-                db.execute("DELETE FROM settings WHERE key=?", (old_key,))
+                for prefix in ("page:", "page-links:"):
+                    old_key, new_key = prefix + old_phrase, prefix + new_phrase
+                    row = db.execute("SELECT value FROM settings WHERE key=?", (old_key,)).fetchone()
+                    if row is None:
+                        continue
+                    db.execute("INSERT INTO settings(key, value) VALUES (?, ?) "
+                               "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                               (new_key, row[0]))
+                    db.execute("DELETE FROM settings WHERE key=?", (old_key,))
 
     def requeue_filtered(self):
         """Reconsider previously filtered profiles only when filters change."""
